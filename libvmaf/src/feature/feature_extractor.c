@@ -57,6 +57,7 @@ extern VmafFeatureExtractor vmaf_fex_integer_motion_cuda;
 #endif
 #if HAVE_VULKAN
 extern VmafFeatureExtractor vmaf_fex_integer_motion_vulkan;
+extern VmafFeatureExtractor vmaf_fex_integer_adm_vulkan;
 #endif
 extern VmafFeatureExtractor vmaf_fex_null;
 
@@ -89,6 +90,7 @@ static VmafFeatureExtractor *feature_extractor_list[] = {
     /* after the CPU feature extractors: a lookup without the Vulkan flag
      * finds those first */
     &vmaf_fex_integer_motion_vulkan,
+    &vmaf_fex_integer_adm_vulkan,
 #endif
     &vmaf_fex_null,
     NULL

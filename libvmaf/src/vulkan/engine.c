@@ -70,10 +70,17 @@ static void engine_destroy(VmafVkEngine *e)
     pthread_mutex_unlock(&e->lock);
     for (int k = 0; k < VMAF_VK_ENGINE_SLOTS; k++)
         if (e->slot[k].thread_up) pthread_join(e->slot[k].thread, NULL);
-    if (e->timing && e->frames)
+    if (e->timing && e->frames) {
+        char names[128] = "";
+        for (unsigned i = 0; i < e->n_modules; i++) {
+            size_t n = strlen(names);
+            snprintf(names + n, sizeof(names) - n, "%s%s", i ? " " : "",
+                     e->module[i].name);
+        }
         vmaf_log(VMAF_LOG_LEVEL_INFO,
-                 "vulkan: %u frames, %.3f ms of GPU time per frame\n",
-                 e->frames, e->gpu_seconds * 1000.0 / e->frames);
+                 "vulkan: %u frames, %.3f ms of GPU time per frame (%s)\n",
+                 e->frames, e->gpu_seconds * 1000.0 / e->frames, names);
+    }
     for (unsigned i = 0; i < e->n_modules; i++)
         if (e->module[i].close) e->module[i].close(&e->module[i], e);
     vmaf_vk_close(&e->vk);
