@@ -18,7 +18,8 @@
 
 /* integer_vif.c on Vulkan: the subsampled scales (shaders vif_sub_v and
  * vif_sub_h) once, and the statistic of each scale (vif_stat_v and vif_stat_h)
- * once per enhancement gain limit; each workgroup writes its partial sums of
+ * with its vertical pass once and each horizontal pass for two
+ * enhancement gain limits; each workgroup writes its partial sums of
  * the numerator and denominator, added up here as vif_statistic_8/16 do. */
 
 #include <errno.h>
@@ -82,6 +83,8 @@ static const VmafOption options[] = {
 typedef struct VifPC {
     int32_t W, H, scale, srckind, bpc, egl_int;
     double egl;
+    int32_t units, egl_int2;
+    double egl2;
 } VifPC;
 
 /* The gain limit as the statistic's fast path takes it: a whole number from 1
@@ -167,13 +170,20 @@ static int module_setup(VmafVkModule *m, VmafVkEngine *e)
         err = vmaf_vk_pipeline(vk, &vm->sub_v[s], "vif_sub_v", b, 7);
         if (!err) err = vmaf_vk_pipeline(vk, &vm->sub_h[s], "vif_sub_h", b, 7);
     }
-    for (unsigned u = 0; u < vm->n_unit && !err; u++) {
+    /* The filtered statistics do not depend on the gain limit: one vertical
+     * pass per scale, and each horizontal pass scores two gain limits. */
+    for (int s = 0; s < 4 && !err; s++) {
+        VmafVkBuf *b[7] = { sref[s], sdis[s], &vm->tmp, &vm->log2tab,
+                            &vm->unit[0].part[s], &vm->tmp, &vm->tmp };
+        err = vmaf_vk_pipeline(vk, &vm->unit[0].stat_v[s], "vif_stat_v", b, 7);
+    }
+    for (unsigned u = 0; u < vm->n_unit && !err; u += 2) {
+        const unsigned u2 = u + 1 < vm->n_unit ? u + 1 : u;
         for (int s = 0; s < 4 && !err; s++) {
             VmafVkBuf *b[7] = { sref[s], sdis[s], &vm->tmp, &vm->log2tab,
-                                &vm->unit[u].part[s], &vm->tmp, &vm->tmp };
-            err = vmaf_vk_pipeline(vk, &vm->unit[u].stat_v[s], "vif_stat_v", b, 7);
-            if (!err)
-                err = vmaf_vk_pipeline(vk, &vm->unit[u].stat_h[s], "vif_stat_h", b, 7);
+                                &vm->unit[u].part[s], &vm->unit[u2].part[s],
+                                &vm->tmp };
+            err = vmaf_vk_pipeline(vk, &vm->unit[u].stat_h[s], "vif_stat_h", b, 7);
         }
     }
     return err;
@@ -191,7 +201,7 @@ static int module_record(VmafVkModule *m, VmafVkEngine *e, int slot,
         if (s > 0) {
             VifPC pc = { vm->vw[s - 1], vm->vh[s - 1], s,
                          s == 1 ? srckind0 : 2, (int32_t)e->bpc, -1,
-                         vm->unit[0].egl };
+                         vm->unit[0].egl, 1, -1, vm->unit[0].egl };
             vmaf_vk_push(vk, &pc, sizeof(pc));
             vmaf_vk_bind(vk, &vm->sub_v[s]);
             vmaf_vk_dispatch(vk, (vm->vw[s - 1] + 15) / 16,
@@ -202,19 +212,26 @@ static int module_record(VmafVkModule *m, VmafVkEngine *e, int slot,
                              (vm->vh[s - 1] / 2 + 15) / 16);
             vmaf_vk_barrier(vk);
         }
-        for (unsigned u = 0; u < vm->n_unit; u++) {
-            VifPC pc = { vm->vw[s], vm->vh[s], s, s == 0 ? srckind0 : 2,
-                         (int32_t)e->bpc, vif_egl_int(vm->unit[u].egl),
-                         vm->unit[u].egl };
-            const uint32_t gx = (vm->vw[s] + 15) / 16, gy = (vm->vh[s] + 15) / 16;
+        const uint32_t gx = (vm->vw[s] + 15) / 16, gy = (vm->vh[s] + 15) / 16;
+        VifPC pc = { vm->vw[s], vm->vh[s], s, s == 0 ? srckind0 : 2,
+                     (int32_t)e->bpc, -1, vm->unit[0].egl, 1, -1, vm->unit[0].egl };
+        vmaf_vk_push(vk, &pc, sizeof(pc));
+        vmaf_vk_bind(vk, &vm->unit[0].stat_v[s]);
+        vmaf_vk_dispatch(vk, gx, gy);
+        vmaf_vk_barrier(vk);
+        for (unsigned u = 0; u < vm->n_unit; u += 2) {
+            const bool two = u + 1 < vm->n_unit;
+            const VifUnit *a = &vm->unit[u], *b = &vm->unit[two ? u + 1 : u];
+            pc.egl_int = vif_egl_int(a->egl);
+            pc.egl = a->egl;
+            pc.units = two ? 2 : 1;
+            pc.egl_int2 = vif_egl_int(b->egl);
+            pc.egl2 = b->egl;
             vmaf_vk_push(vk, &pc, sizeof(pc));
-            vmaf_vk_bind(vk, &vm->unit[u].stat_v[s]);
-            vmaf_vk_dispatch(vk, gx, gy);
-            vmaf_vk_barrier(vk);
             vmaf_vk_bind(vk, &vm->unit[u].stat_h[s]);
             vmaf_vk_dispatch(vk, gx, gy);
-            vmaf_vk_barrier(vk);
         }
+        vmaf_vk_barrier(vk);
     }
     for (unsigned u = 0; u < vm->n_unit; u++)
         for (int s = 0; s < 4; s++)

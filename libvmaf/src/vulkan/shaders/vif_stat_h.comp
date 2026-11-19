@@ -3,9 +3,10 @@
 #extension GL_GOOGLE_include_directive : require
 #include "vif_common.glsl"
 // VIF statistic, horizontal pass and the per pixel sums; each workgroup writes four sums:
-// accum_num_log, accum_den_log, accum_num_non_log, accum_den_non_log.
+// accum_num_log, accum_den_log, accum_num_non_log, accum_den_non_log. With pc.units 2 a second gain limit (pc.egl_int2, pc.egl2) is scored
+// from the same filtered statistics: only accum_num_log depends on it; its four sums go to binding 5.
 
-shared int64_t sh[4][256];
+shared int64_t sh[5][256];
 
 int log2_32(uint t) {
 	const int k = findMSB(t) - 15;
@@ -73,9 +74,38 @@ bool fast_gain(int sigma12, int sigma1, int sigma2, int limit, out int sv, out i
 	return true;
 }
 
+// The numerator's log term of one pixel for one gain limit (sigma1_sq >= sigma_nsq, sigma12 > 0, sigma2_sq > 0).
+int64_t gain_log(int sigma12, int sigma1_sq, int sigma2_sq, int egl_int, double egl) {
+	const int sigma_nsq = 65536 << 1;
+	int sv_sq;
+	int64_t gs_int;
+	bool fast = egl_int > 0 && fast_gain(sigma12, sigma1_sq, sigma2_sq, egl_int, sv_sq, gs_int);
+#ifdef VIF_VERIFY
+	int fsv = sv_sq; int64_t fgs = gs_int; bool was_fast = fast; fast = false;
+#endif
+	if (!fast) {
+		const double eps = 65536.0LF * 1.0e-10LF;
+		precise double g = double(sigma12) / (double(sigma1_sq) + eps);
+		precise double sv = double(sigma2_sq) - g * double(sigma12);
+		sv_sq = max(int(sv), 0);
+		g = min(g, egl);
+		precise double gg = g * g;
+		precise double gs = gg * double(sigma1_sq);
+		gs_int = int64_t(gs);
+	}
+	const uint numer1 = uint(sv_sq) + uint(sigma_nsq);
+	const int64_t numer1_tmp = gs_int + int64_t(numer1);
+	int64_t num_log = int64_t(log2_64(uint64_t(numer1_tmp)) - log2_64(uint64_t(numer1)));
+#ifdef VIF_VERIFY
+	if (was_fast && (fsv != sv_sq || fgs != gs_int)) num_log += 1l << 50;  // test builds: a disagreement wrecks the score
+#endif
+	return num_log;
+}
+
+
 void main() {
 	const int x = int(gl_GlobalInvocationID.x), y = int(gl_GlobalInvocationID.y);
-	int64_t num_log = 0l, den_log = 0l, num_non = 0l, den_non = 0l;
+	int64_t num_log = 0l, num_log2 = 0l, den_log = 0l, num_non = 0l, den_non = 0l;
 	if (x < pc.W && y < pc.H) {
 		const int fw = fwidth(pc.scale);
 		const int col0 = x - fw / 2;
@@ -103,28 +133,8 @@ void main() {
 		if (sigma1_sq >= sigma_nsq) {
 			den_log = int64_t(log2_32(uint(sigma_nsq + sigma1_sq)) - 2048 * 17);
 			if (sigma12 > 0 && sigma2_sq > 0) {
-				int sv_sq;
-				int64_t gs_int;
-				bool fast = pc.egl_int > 0 && fast_gain(sigma12, sigma1_sq, sigma2_sq, pc.egl_int, sv_sq, gs_int);
-#ifdef VIF_VERIFY
-				int fsv = sv_sq; int64_t fgs = gs_int; bool was_fast = fast; fast = false;
-#endif
-				if (!fast) {
-					const double eps = 65536.0LF * 1.0e-10LF;
-					precise double g = double(sigma12) / (double(sigma1_sq) + eps);
-					precise double sv = double(sigma2_sq) - g * double(sigma12);
-					sv_sq = max(int(sv), 0);
-					g = min(g, pc.egl);
-					precise double gg = g * g;
-					precise double gs = gg * double(sigma1_sq);
-					gs_int = int64_t(gs);
-				}
-				const uint numer1 = uint(sv_sq) + uint(sigma_nsq);
-				const int64_t numer1_tmp = gs_int + int64_t(numer1);
-				num_log = int64_t(log2_64(uint64_t(numer1_tmp)) - log2_64(uint64_t(numer1)));
-#ifdef VIF_VERIFY
-				if (was_fast && (fsv != sv_sq || fgs != gs_int)) num_log += 1l << 50;  // test builds: a disagreement wrecks the score
-#endif
+				num_log = gain_log(sigma12, sigma1_sq, sigma2_sq, pc.egl_int, pc.egl);
+				if (pc.units > 1) num_log2 = gain_log(sigma12, sigma1_sq, sigma2_sq, pc.egl_int2, pc.egl2);
 			}
 		} else {
 			num_non = int64_t(sigma2_sq);
@@ -132,14 +142,22 @@ void main() {
 		}
 	}
 	const uint lid = gl_LocalInvocationIndex;
-	sh[0][lid] = num_log; sh[1][lid] = den_log; sh[2][lid] = num_non; sh[3][lid] = den_non;
+	const int nq = pc.units > 1 ? 5 : 4;
+	sh[0][lid] = num_log; sh[1][lid] = den_log; sh[2][lid] = num_non; sh[3][lid] = den_non; sh[4][lid] = num_log2;
 	barrier();
 	for (uint s = 128u; s > 0u; s >>= 1) {
-		if (lid < s) for (int q = 0; q < 4; q++) sh[q][lid] += sh[q][lid + s];
+		if (lid < s) for (int q = 0; q < nq; q++) sh[q][lid] += sh[q][lid + s];
 		barrier();
 	}
 	if (lid == 0u) {
 		const uint wg = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
 		for (int q = 0; q < 4; q++) part[wg * 4u + uint(q)] = sh[q][0];
+		if (pc.units > 1) {
+			for (int q = 0; q < 4; q++) {
+				const uvec2 w = unpackUint2x32(uint64_t(sh[q == 0 ? 4 : q][0]));
+				out_ref[(wg * 4u + uint(q)) * 2u] = w.x;
+				out_ref[(wg * 4u + uint(q)) * 2u + 1u] = w.y;
+			}
+		}
 	}
 }

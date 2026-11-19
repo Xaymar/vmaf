@@ -9,6 +9,9 @@ layout(push_constant) uniform PC {
 	int bpc;      // bits per component of the source video
 	int egl_int;  // vif_enhn_gain_limit when it is a whole number 1..1000, else -1 (then only the double path is used)
 	double egl;   // vif_enhn_gain_limit
+	int units;    // vif_stat_h: 2 when a second gain limit is scored in the same pass (into binding 5), else 1
+	int egl_int2; // the second gain limit, as egl_int and egl
+	double egl2;
 } pc;
 
 layout(std430, binding = 0) readonly buffer RefIn { uint src_ref[]; };
@@ -16,7 +19,7 @@ layout(std430, binding = 1) readonly buffer DisIn { uint src_dis[]; };
 layout(std430, binding = 2) buffer Tmp { uint tmp[]; };      // arrays of W*H words (the subsample kernels: (H/2)*W)
 layout(std430, binding = 3) readonly buffer Log2 { uint log2_table[]; };
 layout(std430, binding = 4) buffer Part { int64_t part[]; };  // four sums per workgroup
-layout(std430, binding = 5) buffer RefOut { uint out_ref[]; };
+layout(std430, binding = 5) buffer RefOut { uint out_ref[]; };  // vif_stat_h: the second gain limit's sums (int64_t pairs)
 layout(std430, binding = 6) buffer DisOut { uint out_dis[]; };
 
 const uint FILT0[17] = uint[17](489u, 935u, 1640u, 2640u, 3896u, 5274u, 6547u, 7455u, 7784u, 7455u, 6547u, 5274u, 3896u, 2640u, 1640u, 935u, 489u);
