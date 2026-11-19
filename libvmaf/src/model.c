@@ -12,7 +12,6 @@
 #include "model.h"
 #include "read_json_model.h"
 #include "svm.h"
-#include "unpickle.h"
 
 typedef struct VmafBuiltInModel {
     const char *version;
@@ -22,23 +21,57 @@ typedef struct VmafBuiltInModel {
 
 #if VMAF_BUILT_IN_MODELS
 #if VMAF_FLOAT_FEATURES
-extern const char src_vmaf_float_v0_6_1neg_json;
+extern const char src_vmaf_float_v0_6_1neg_json[];
 extern const int src_vmaf_float_v0_6_1neg_json_len;
-extern const char src_vmaf_float_v0_6_1_json;
+extern const char src_vmaf_float_v0_6_1_json[];
 extern const int src_vmaf_float_v0_6_1_json_len;
-extern const char src_vmaf_float_b_v0_6_3_json;
+extern const char src_vmaf_float_b_v0_6_3_json[];
 extern const int src_vmaf_float_b_v0_6_3_json_len;
-extern const char src_vmaf_float_4k_v0_6_1_json;
+extern const char src_vmaf_float_4k_v0_6_1_json[];
 extern const int src_vmaf_float_4k_v0_6_1_json_len;
 #endif
-extern const char src_vmaf_v0_6_1_json;
+extern const char src_vmaf_v0_6_1_json[];
 extern const int src_vmaf_v0_6_1_json_len;
-extern const char src_vmaf_b_v0_6_3_json;
+extern const char src_vmaf_b_v0_6_3_json[];
 extern const int src_vmaf_b_v0_6_3_json_len;
-extern const char src_vmaf_v0_6_1neg_json;
+extern const char src_vmaf_v0_6_1neg_json[];
 extern const int src_vmaf_v0_6_1neg_json_len;
-extern const char src_vmaf_4k_v0_6_1_json;
+extern const char src_vmaf_4k_v0_6_1_json[];
 extern const int src_vmaf_4k_v0_6_1_json_len;
+extern const char src_vmaf_4k_v0_6_1neg_json[];
+extern const int src_vmaf_4k_v0_6_1neg_json_len;
+extern const char src_vmaf_v1_0_16_3d0h_json[];
+extern const int src_vmaf_v1_0_16_3d0h_json_len;
+extern const char src_vmaf_v1_0_16_3d0h_2160_json[];
+extern const int src_vmaf_v1_0_16_3d0h_2160_json_len;
+extern const char src_vmaf_v1_0_16_5d0h_json[];
+extern const int src_vmaf_v1_0_16_5d0h_json_len;
+extern const char src_vmaf_v1_0_16_1d5h_2160_json[];
+extern const int src_vmaf_v1_0_16_1d5h_2160_json_len;
+extern const char src_vmaf_v1_0_16_hfr_3d0h_json[];
+extern const int src_vmaf_v1_0_16_hfr_3d0h_json_len;
+extern const char src_vmaf_v1_0_16_hfr_3d0h_2160_json[];
+extern const int src_vmaf_v1_0_16_hfr_3d0h_2160_json_len;
+extern const char src_vmaf_v1_0_16_hfr_5d0h_json[];
+extern const int src_vmaf_v1_0_16_hfr_5d0h_json_len;
+extern const char src_vmaf_v1_0_16_hfr_1d5h_2160_json[];
+extern const int src_vmaf_v1_0_16_hfr_1d5h_2160_json_len;
+extern const char src_hdr_vmaf_v1_1_8_3d0h_json[];
+extern const int src_hdr_vmaf_v1_1_8_3d0h_json_len;
+extern const char src_hdr_vmaf_v1_1_8_3d0h_2160_json[];
+extern const int src_hdr_vmaf_v1_1_8_3d0h_2160_json_len;
+extern const char src_hdr_vmaf_v1_1_8_5d0h_json[];
+extern const int src_hdr_vmaf_v1_1_8_5d0h_json_len;
+extern const char src_hdr_vmaf_v1_1_8_1d5h_2160_json[];
+extern const int src_hdr_vmaf_v1_1_8_1d5h_2160_json_len;
+extern const char src_hdr_vmaf_v1_1_8_hfr_3d0h_json[];
+extern const int src_hdr_vmaf_v1_1_8_hfr_3d0h_json_len;
+extern const char src_hdr_vmaf_v1_1_8_hfr_3d0h_2160_json[];
+extern const int src_hdr_vmaf_v1_1_8_hfr_3d0h_2160_json_len;
+extern const char src_hdr_vmaf_v1_1_8_hfr_5d0h_json[];
+extern const int src_hdr_vmaf_v1_1_8_hfr_5d0h_json_len;
+extern const char src_hdr_vmaf_v1_1_8_hfr_1d5h_2160_json[];
+extern const int src_hdr_vmaf_v1_1_8_hfr_1d5h_2160_json_len;
 #endif
 
 static const VmafBuiltInModel built_in_models[] = {
@@ -46,44 +79,132 @@ static const VmafBuiltInModel built_in_models[] = {
 #if VMAF_FLOAT_FEATURES
     {
         .version = "vmaf_float_v0.6.1",
-        .data = &src_vmaf_float_v0_6_1_json,
+        .data = src_vmaf_float_v0_6_1_json,
         .data_len = &src_vmaf_float_v0_6_1_json_len,
     },
     {
         .version = "vmaf_float_b_v0.6.3",
-        .data = &src_vmaf_float_b_v0_6_3_json,
+        .data = src_vmaf_float_b_v0_6_3_json,
         .data_len = &src_vmaf_float_b_v0_6_3_json_len,
     },
     {
         .version = "vmaf_float_v0.6.1neg",
-        .data = &src_vmaf_float_v0_6_1neg_json,
+        .data = src_vmaf_float_v0_6_1neg_json,
         .data_len = &src_vmaf_float_v0_6_1neg_json_len,
     },
     {
         .version = "vmaf_float_4k_v0.6.1",
-        .data = &src_vmaf_float_4k_v0_6_1_json,
+        .data = src_vmaf_float_4k_v0_6_1_json,
         .data_len = &src_vmaf_float_4k_v0_6_1_json_len,
     },
 #endif
     {
         .version = "vmaf_v0.6.1",
-        .data = &src_vmaf_v0_6_1_json,
+        .data = src_vmaf_v0_6_1_json,
         .data_len = &src_vmaf_v0_6_1_json_len,
     },
     {
         .version = "vmaf_b_v0.6.3",
-        .data = &src_vmaf_b_v0_6_3_json,
+        .data = src_vmaf_b_v0_6_3_json,
         .data_len = &src_vmaf_b_v0_6_3_json_len,
     },
     {
         .version = "vmaf_v0.6.1neg",
-        .data = &src_vmaf_v0_6_1neg_json,
+        .data = src_vmaf_v0_6_1neg_json,
         .data_len = &src_vmaf_v0_6_1neg_json_len,
     },
     {
         .version = "vmaf_4k_v0.6.1",
-        .data = &src_vmaf_4k_v0_6_1_json,
+        .data = src_vmaf_4k_v0_6_1_json,
         .data_len = &src_vmaf_4k_v0_6_1_json_len,
+    },
+    {
+        .version = "vmaf_4k_v0.6.1neg",
+        .data = src_vmaf_4k_v0_6_1neg_json,
+        .data_len = &src_vmaf_4k_v0_6_1neg_json_len,
+    },
+    {
+        .version = "vmaf_v1.0.16_3d0h",
+        .data = src_vmaf_v1_0_16_3d0h_json,
+        .data_len = &src_vmaf_v1_0_16_3d0h_json_len,
+    },
+    {
+        .version = "vmaf_v1.0.16_3d0h_2160",
+        .data = src_vmaf_v1_0_16_3d0h_2160_json,
+        .data_len = &src_vmaf_v1_0_16_3d0h_2160_json_len,
+    },
+    {
+        .version = "vmaf_v1.0.16_5d0h",
+        .data = src_vmaf_v1_0_16_5d0h_json,
+        .data_len = &src_vmaf_v1_0_16_5d0h_json_len,
+    },
+    {
+        .version = "vmaf_v1.0.16_1d5h_2160",
+        .data = src_vmaf_v1_0_16_1d5h_2160_json,
+        .data_len = &src_vmaf_v1_0_16_1d5h_2160_json_len,
+    },
+    {
+        .version = "vmaf_v1.0.16_hfr_3d0h",
+        .data = src_vmaf_v1_0_16_hfr_3d0h_json,
+        .data_len = &src_vmaf_v1_0_16_hfr_3d0h_json_len,
+    },
+    {
+        .version = "vmaf_v1.0.16_hfr_3d0h_2160",
+        .data = src_vmaf_v1_0_16_hfr_3d0h_2160_json,
+        .data_len = &src_vmaf_v1_0_16_hfr_3d0h_2160_json_len,
+    },
+    {
+        .version = "vmaf_v1.0.16_hfr_5d0h",
+        .data = src_vmaf_v1_0_16_hfr_5d0h_json,
+        .data_len = &src_vmaf_v1_0_16_hfr_5d0h_json_len,
+    },
+    {
+        .version = "vmaf_v1.0.16_hfr_1d5h_2160",
+        .data = src_vmaf_v1_0_16_hfr_1d5h_2160_json,
+        .data_len = &src_vmaf_v1_0_16_hfr_1d5h_2160_json_len,
+    },
+    /*
+     * HDR default (3H, matching vmaf_v0.6.1's 3H convention for SDR).
+     */
+    {
+        .version = "hdr_vmaf_v1.1.8_3d0h",
+        .data = src_hdr_vmaf_v1_1_8_3d0h_json,
+        .data_len = &src_hdr_vmaf_v1_1_8_3d0h_json_len,
+    },
+    {
+        .version = "hdr_vmaf_v1.1.8_3d0h_2160",
+        .data = src_hdr_vmaf_v1_1_8_3d0h_2160_json,
+        .data_len = &src_hdr_vmaf_v1_1_8_3d0h_2160_json_len,
+    },
+    {
+        .version = "hdr_vmaf_v1.1.8_5d0h",
+        .data = src_hdr_vmaf_v1_1_8_5d0h_json,
+        .data_len = &src_hdr_vmaf_v1_1_8_5d0h_json_len,
+    },
+    {
+        .version = "hdr_vmaf_v1.1.8_1d5h_2160",
+        .data = src_hdr_vmaf_v1_1_8_1d5h_2160_json,
+        .data_len = &src_hdr_vmaf_v1_1_8_1d5h_2160_json_len,
+    },
+    {
+        .version = "hdr_vmaf_v1.1.8_hfr_3d0h",
+        .data = src_hdr_vmaf_v1_1_8_hfr_3d0h_json,
+        .data_len = &src_hdr_vmaf_v1_1_8_hfr_3d0h_json_len,
+    },
+    {
+        .version = "hdr_vmaf_v1.1.8_hfr_3d0h_2160",
+        .data = src_hdr_vmaf_v1_1_8_hfr_3d0h_2160_json,
+        .data_len = &src_hdr_vmaf_v1_1_8_hfr_3d0h_2160_json_len,
+    },
+    {
+        .version = "hdr_vmaf_v1.1.8_hfr_5d0h",
+        .data = src_hdr_vmaf_v1_1_8_hfr_5d0h_json,
+        .data_len = &src_hdr_vmaf_v1_1_8_hfr_5d0h_json_len,
+    },
+    {
+        .version = "hdr_vmaf_v1.1.8_hfr_1d5h_2160",
+        .data = src_hdr_vmaf_v1_1_8_hfr_1d5h_2160_json,
+        .data_len = &src_hdr_vmaf_v1_1_8_hfr_1d5h_2160_json_len,
     },
 #endif
     { 0 }
@@ -125,9 +246,9 @@ char *vmaf_model_generate_name(VmafModelConfig *cfg)
     memset(name, 0, name_sz);
 
     if (!cfg->name)
-        strncpy(name, default_name, name_sz);
+        strcpy(name, default_name);
     else
-        strncpy(name, cfg->name, name_sz);
+        strcpy(name, cfg->name);
 
     return name;
 }
@@ -137,12 +258,13 @@ int vmaf_model_load_from_path(VmafModel **model, VmafModelConfig *cfg,
 {
     int err = vmaf_read_json_model_from_path(model, cfg, path);
     if (err) {
-        vmaf_log(VMAF_LOG_LEVEL_WARNING,
+        vmaf_log(VMAF_LOG_LEVEL_ERROR,
                  "could not read model from path: \"%s\"\n", path);
         char *ext = strrchr(path, '.');
         if (ext && !strcmp(ext, ".pkl")) {
-            vmaf_log(VMAF_LOG_LEVEL_WARNING,
-                     "pkl model files have been deprecated, use json\n");
+            vmaf_log(
+                VMAF_LOG_LEVEL_ERROR,
+                "support for pkl model files has been removed, use json\n");
         }
     }
     return err;
@@ -159,12 +281,12 @@ int vmaf_model_feature_overload(VmafModel *model, const char *feature_name,
 
     for (unsigned i = 0; i < model->n_features; i++) {
         VmafFeatureExtractor *fex =
-            vmaf_get_feature_extractor_by_feature_name(model->feature[i].name);
+            vmaf_get_feature_extractor_by_feature_name(model->feature[i].name, 0);
         if (!fex) continue;
         if (strcmp(feature_name, fex->name)) continue;
         VmafDictionary *d =
-            vmaf_dictionary_merge(&model->feature[i].opts_dict,
-                                  &opts_dict, 0);
+            vmaf_dictionary_merge((VmafDictionary**)&model->feature[i].opts_dict,
+                                  (VmafDictionary**)&opts_dict, 0);
         if (!d) return -ENOMEM;
         err = vmaf_dictionary_free(&model->feature[i].opts_dict);
         if (err) goto exit;
@@ -172,7 +294,7 @@ int vmaf_model_feature_overload(VmafModel *model, const char *feature_name,
     }
 
 exit:
-    err |= vmaf_dictionary_free(&opts_dict);
+    err |= vmaf_dictionary_free((VmafDictionary**)&opts_dict);
     return err;
 }
 
@@ -187,6 +309,7 @@ void vmaf_model_destroy(VmafModel *model)
         vmaf_dictionary_free(&model->feature[i].opts_dict);
     }
     free(model->feature);
+    free(model->score_transform.knots.list);
     free(model);
 }
 
@@ -211,8 +334,8 @@ int vmaf_model_collection_append(VmafModelCollection **model_collection,
         const size_t name_sz = strlen(model->name) - 5 + 1;
         mc->name = malloc(name_sz);
         if (!mc->name) goto fail_model;
-        memset(mc->name, 0, name_sz);
-        strncpy(mc->name, model->name, name_sz - 1);
+        memset((char*)mc->name, 0, name_sz);
+        strncpy((char*)mc->name, model->name, name_sz - 1);
     }
 
     if (mc->type != model->type) return -EINVAL;
@@ -243,7 +366,7 @@ void vmaf_model_collection_destroy(VmafModelCollection *model_collection)
     for (unsigned i = 0; i < model_collection->cnt; i++)
         vmaf_model_destroy(model_collection->model[i]);
     free(model_collection->model);
-    free(model_collection->name);
+    free((char*)model_collection->name);
     free(model_collection);
 }
 
@@ -281,12 +404,13 @@ int vmaf_model_collection_load_from_path(VmafModel **model,
         vmaf_read_json_model_collection_from_path(model, model_collection,
                                                   cfg, path);
     if (err) {
-        vmaf_log(VMAF_LOG_LEVEL_WARNING,
+        vmaf_log(VMAF_LOG_LEVEL_ERROR,
                  "could not read model collection from path: \"%s\"\n", path);
         char *ext = strrchr(path, '.');
         if (ext && !strcmp(ext, ".pkl")) {
-            vmaf_log(VMAF_LOG_LEVEL_WARNING,
-                     "pkl model files have been deprecated, use json\n");
+            vmaf_log(
+                VMAF_LOG_LEVEL_ERROR,
+                "support for pkl model files has been removed, use json\n");
         }
     }
 
@@ -304,7 +428,7 @@ int vmaf_model_collection_feature_overload(VmafModel *model,
     int err = 0;
     for (unsigned i = 0; i < mc->cnt; i++) {
         VmafFeatureDictionary *d = NULL;
-        if (vmaf_dictionary_copy(&opts_dict, &d)) goto exit;
+        if (vmaf_dictionary_copy((VmafDictionary**)&opts_dict, (VmafDictionary**)&d)) goto exit;
         err |= vmaf_model_feature_overload(mc->model[i], feature_name, d);
     }
 

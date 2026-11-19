@@ -29,6 +29,14 @@ static Alias alias_map[] = {
         .alias = "adm2",
     },
     {
+        .name = "VMAF_feature_aim_score",
+        .alias = "aim",
+    },
+    {
+        .name = "VMAF_feature_adm3_score",
+        .alias = "adm3",
+    },
+    {
         .name = "VMAF_feature_adm_scale0_score",
         .alias = "adm_scale0",
     },
@@ -53,6 +61,10 @@ static Alias alias_map[] = {
         .alias = "motion2",
     },
     {
+        .name = "VMAF_feature_motion3_score",
+        .alias = "motion3",
+    },
+    {
         .name = "VMAF_feature_vif_scale0_score",
         .alias = "vif_scale0",
     },
@@ -73,12 +85,24 @@ static Alias alias_map[] = {
         .alias = "integer_adm2",
     },
     {
+        .name = "VMAF_integer_feature_aim_score",
+        .alias = "integer_aim",
+    },
+    {
+        .name = "VMAF_integer_feature_adm3_score",
+        .alias = "integer_adm3",
+    },
+    {
         .name = "VMAF_integer_feature_motion_score",
         .alias = "integer_motion",
     },
     {
         .name = "VMAF_integer_feature_motion2_score",
         .alias = "integer_motion2",
+    },
+    {
+        .name = "VMAF_integer_feature_motion3_score",
+        .alias = "integer_motion3",
     },
     {
         .name = "VMAF_integer_feature_vif_scale0_score",
@@ -96,47 +120,27 @@ static Alias alias_map[] = {
         .name = "VMAF_integer_feature_vif_scale3_score",
         .alias = "integer_vif_scale3",
     },
+    {
+        .name = "Cambi_feature_cambi_score",
+        .alias = "cambi",
+    },
+    {
+        .name = "Speed_chroma_feature_speed_chroma_u_score",
+        .alias = "speed_chroma_u",
+    },
+    {
+        .name = "Speed_chroma_feature_speed_chroma_v_score",
+        .alias = "speed_chroma_v",
+    },
+    {
+        .name = "Speed_chroma_feature_speed_chroma_uv_score",
+        .alias = "speed_chroma_uv",
+    },
+    {
+        .name = "Speed_temporal_feature_speed_temporal_score",
+        .alias = "speed_temporal",
+    },
 };
-
-static Alias vmafossexec_alias_map[] = {
-    {
-        .name = "float_psnr",
-        .alias = "psnr",
-    },
-    {
-        .name = "psnr_y",
-        .alias = "psnr",
-    },
-    {
-        .name = "float_ssim",
-        .alias = "ssim",
-    },
-    {
-        .name = "float_ms_ssim",
-        .alias = "ms_ssim",
-    },
-};
-
-static bool vmafossexec_aliases = false;
-void vmaf_use_vmafossexec_aliases(void)
-{
-    vmafossexec_aliases = true;
-}
-
-static const char *vmafossexec_feature_name_alias(const char *feature_name)
-{
-    if (!vmafossexec_aliases) return feature_name;
-
-    unsigned alias_cnt =
-        sizeof(vmafossexec_alias_map) / sizeof(vmafossexec_alias_map[0]);
-
-    for (unsigned i = 0; i < alias_cnt; i++) {
-       if (!strcmp(feature_name, vmafossexec_alias_map[i].name))
-           return vmafossexec_alias_map[i].alias;
-    }
-
-    return feature_name;
-}
 
 const char *vmaf_feature_name_alias(const char *feature_name)
 {
@@ -144,8 +148,8 @@ const char *vmaf_feature_name_alias(const char *feature_name)
 
     for (unsigned i = 0; i < alias_cnt; i++) {
        if (!strcmp(feature_name, alias_map[i].name))
-           return vmafossexec_feature_name_alias(alias_map[i].alias);
+           return alias_map[i].alias;
     }
 
-    return vmafossexec_feature_name_alias(feature_name);
+    return feature_name;
 }

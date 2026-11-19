@@ -1,0 +1,35 @@
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x = 32) in;
+#include "speed_common.glsl"
+// One invocation per covariance (325 per plane), in small workgroups so they spread over the whole GPU (double arithmetic is slow on most GPUs, and
+// a workgroup runs on one compute unit): each sum is one chain in row order, as on the CPU, of the products of speed_center's centred samples.
+void main() {
+	const int t = int(gl_GlobalInvocationID.x), p = int(gl_WorkGroupID.y), S = pc.subw * pc.subh;
+	if (t >= N * (N + 1) / 2) return;
+	int x = 0;
+	while ((x + 1) * (x + 2) / 2 <= t) x++;
+	const int y = t - x * (x + 1) / 2;
+	const int cx = (p * N + x) * S, cy = (p * N + y) * S;
+	// The loads of a run of K samples go out before its sum, so that they overlap instead of each waiting for memory in turn (with one invocation
+	// per sum there are only ~40 warps on the whole GPU to hide that); the products and the additions stay one after another, in order.
+	const int K = 16;
+	precise double acc = 0.0LF;
+	int s = 0;
+	for (; s + K <= S; s += K) {
+		double a[K], b[K];
+		for (int k = 0; k < K; k++) { a[k] = cen[cx + s + k]; b[k] = cen[cy + s + k]; }
+		for (int k = 0; k < K; k++) {
+			precise double d = a[k] * b[k];
+			acc += d;
+		}
+	}
+	for (; s < S; s++) {
+		precise double d = cen[cx + s] * cen[cy + s];
+		acc += d;
+	}
+	const float cv = rf(ddiv(acc, double(S)));
+	covm[p * N * N + x * N + y] = cv;
+	covm[p * N * N + y * N + x] = cv;
+}

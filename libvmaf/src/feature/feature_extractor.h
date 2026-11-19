@@ -24,14 +24,25 @@
 #include <stdlib.h>
 
 #include "dict.h"
+#include "framesync.h"
 #include "feature_collector.h"
 #include "opt.h"
 
 #include "libvmaf/picture.h"
 
+#ifdef HAVE_CUDA
+#include "cuda/common.h"
+#endif
+
 enum VmafFeatureExtractorFlags {
     VMAF_FEATURE_EXTRACTOR_TEMPORAL = 1 << 0,
+    VMAF_FEATURE_EXTRACTOR_CUDA = 1 << 1,
+    VMAF_FEATURE_FRAME_SYNC = 1 << 2,
+    VMAF_FEATURE_EXTRACTOR_PREV_REF = 1 << 3,
+    VMAF_FEATURE_EXTRACTOR_VULKAN = 1 << 4,
 };
+
+struct VmafFeatureExtractorContext;
 
 typedef struct VmafFeatureExtractor {
     const char *name; ///< Name of feature extractor.
@@ -79,15 +90,43 @@ typedef struct VmafFeatureExtractor {
      * @param               fex self.
      */
     int (*close)(struct VmafFeatureExtractor *fex);
+    /**
+     * Merge callback. Optional. During registration, when `incoming` would
+     * otherwise be registered as a distinct instance of this same extractor,
+     * the registry offers it to an already-registered instance through this
+     * callback. Return 1 if `existing` absorbed `incoming` (the registry then
+     * discards `incoming`, as with a dedup hit), 0 to decline, or a negative
+     * error code.
+     */
+    int (*merge)(struct VmafFeatureExtractorContext *existing,
+                 struct VmafFeatureExtractorContext *incoming);
     const VmafOption *options; ///< Optional initialization options.
     void *priv; ///< Custom data.
     size_t priv_size; ///< sizeof private data.
     uint64_t flags; ///< Feauture extraction flags, binary or'd.
     const char **provided_features; ///< Provided feature list, NULL terminated.
+
+    #ifdef HAVE_CUDA
+    VmafCudaState *cu_state; ///< VmafCudaState, set by framework
+    #endif
+
+    #ifdef HAVE_VULKAN
+    struct VmafVulkanContext *vk_ctx; ///< set by framework
+    /* Vulkan feature extractors: whether the GPU can compute what this
+     * instance's options ask for (called once they are set); if not, the CPU
+     * feature extractor of the same name is used instead. NULL: always. */
+    bool (*vulkan_usable)(struct VmafFeatureExtractor *fex);
+    #endif
+
+    VmafFrameSyncContext *framesync;
+    VmafPicture prev_ref; ///< Previous reference picture (n-1), set by framework.
+    VmafPicture prev_prev_ref; ///< Reference picture from two frames ago (n-2), set by framework.
+
 } VmafFeatureExtractor;
 
 VmafFeatureExtractor *vmaf_get_feature_extractor_by_name(const char *name);
-VmafFeatureExtractor *vmaf_get_feature_extractor_by_feature_name(const char *name);
+VmafFeatureExtractor *vmaf_get_feature_extractor_by_feature_name(const char *name,
+                                                                 unsigned flags);
 
 enum VmafFeatureExtractorContextFlags {
     VMAF_FEATURE_EXTRACTOR_CONTEXT_DO_NOT_OVERWRITE = 1 << 0,
@@ -153,7 +192,5 @@ int vmaf_fex_ctx_pool_flush(VmafFeatureExtractorContextPool *pool,
                             VmafFeatureCollector *feature_collector);
 
 int vmaf_fex_ctx_pool_destroy(VmafFeatureExtractorContextPool *pool);
-
-int vmaf_fex_ctx_parse_options(VmafFeatureExtractorContext *fex_ctx);
 
 #endif /* __VMAF_FEATURE_EXTRACTOR_H__ */

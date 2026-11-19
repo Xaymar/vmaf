@@ -30,9 +30,15 @@ typedef struct {
 
 typedef struct {
     char *path_ref, *path_dist;
+    unsigned frame_skip_ref;
+    unsigned frame_skip_dist;
+    unsigned frame_cnt;
+    /* the _ref and _dist sizes default to width and height */
     unsigned width, height;
+    unsigned width_ref, height_ref, width_dist, height_dist;
     enum VmafPixelFormat pix_fmt;
     unsigned bitdepth;
+    VmafColor color_ref, color_dist;
     bool use_yuv;
     char *output_path;
     enum VmafOutputFormat output_fmt;
@@ -45,7 +51,11 @@ typedef struct {
     unsigned thread_cnt;
     bool no_prediction;
     bool quiet;
+    bool common_bitdepth;
     unsigned cpumask;
+    unsigned gpumask;
+    bool vulkan;
+    int vulkan_device;
 } CLISettings;
 
 void cli_parse(const int argc, char *const *const argv,

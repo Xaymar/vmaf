@@ -25,6 +25,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.*/
 #include "vidinput.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 typedef struct y4m_input y4m_input;
 
@@ -556,13 +557,15 @@ static void y4m_convert_null(y4m_input *_y4m,unsigned char *_dst,
   (void)_aux;
 }
 
+#define Y4M_HEADER_BUFSIZE 256
+
 static int y4m_input_open_impl(y4m_input *_y4m,FILE *_fin){
-  char buffer[80];
+  char buffer[Y4M_HEADER_BUFSIZE];
   int  ret;
   int  i;
   int  xstride;
-  /*Read until newline, or 80 cols, whichever happens first.*/
-  for(i=0;i<79;i++){
+  /*Read until newline, or Y4M_HEADER_BUFSIZE cols, whichever happens first.*/
+  for(i=0;i<Y4M_HEADER_BUFSIZE-1;i++){
     ret=fread(buffer+i,1,1,_fin);
     if(ret<1)return -1;
     if(buffer[i]=='\n')break;
@@ -591,7 +594,8 @@ static int y4m_input_open_impl(y4m_input *_y4m,FILE *_fin){
   }
   _y4m->depth=8;
   if(strcmp(_y4m->chroma_type,"420")==0||
-   strcmp(_y4m->chroma_type,"420jpeg")==0){
+   strcmp(_y4m->chroma_type,"420jpeg")==0||
+   strcmp(_y4m->chroma_type,"420mpeg2")==0){
     _y4m->src_c_dec_h=_y4m->dst_c_dec_h=_y4m->src_c_dec_v=_y4m->dst_c_dec_v=2;
     _y4m->dst_buf_read_sz=_y4m->pic_w*_y4m->pic_h
      +2*((_y4m->pic_w+1)/2)*((_y4m->pic_h+1)/2);
@@ -608,6 +612,33 @@ static int y4m_input_open_impl(y4m_input *_y4m,FILE *_fin){
     _y4m->aux_buf_sz=_y4m->aux_buf_read_sz=0;
     _y4m->convert=y4m_convert_null;
   }
+  else if(strcmp(_y4m->chroma_type,"420p12")==0){
+    _y4m->src_c_dec_h=_y4m->dst_c_dec_h=_y4m->src_c_dec_v=_y4m->dst_c_dec_v=2;
+    _y4m->dst_buf_read_sz=(_y4m->pic_w*_y4m->pic_h
+                           +2*((_y4m->pic_w+1)/2)*((_y4m->pic_h+1)/2))*2;
+    _y4m->depth=12;
+    /*Natively supported: no conversion required.*/
+    _y4m->aux_buf_sz=_y4m->aux_buf_read_sz=0;
+    _y4m->convert=y4m_convert_null;
+  }
+  else if (strcmp(_y4m->chroma_type,"422p10")==0) {
+    _y4m->src_c_dec_h=_y4m->dst_c_dec_h=2;
+    _y4m->src_c_dec_v=_y4m->dst_c_dec_v=1;
+    _y4m->depth = 10;
+    _y4m->dst_buf_read_sz = 2*(_y4m->pic_w*_y4m->pic_h
+		    +2*((_y4m->pic_w+1)/2)*_y4m->pic_h);
+    _y4m->aux_buf_sz = _y4m->aux_buf_read_sz = 0;
+    _y4m->convert = y4m_convert_null;
+  }
+  else if (strcmp(_y4m->chroma_type,"422p12")==0) {
+    _y4m->src_c_dec_h=_y4m->dst_c_dec_h=2;
+    _y4m->src_c_dec_v=_y4m->dst_c_dec_v=1;
+    _y4m->depth = 12;
+    _y4m->dst_buf_read_sz = 2*(_y4m->pic_w*_y4m->pic_h
+		    +2*((_y4m->pic_w+1)/2)*_y4m->pic_h);
+    _y4m->aux_buf_sz = _y4m->aux_buf_read_sz = 0;
+    _y4m->convert = y4m_convert_null;
+  }
   else if(strcmp(_y4m->chroma_type,"444p10")==0){
     _y4m->src_c_dec_h=_y4m->dst_c_dec_h=_y4m->src_c_dec_v=_y4m->dst_c_dec_v=1;
     _y4m->dst_buf_read_sz=_y4m->pic_w*_y4m->pic_h*3*2;
@@ -616,13 +647,13 @@ static int y4m_input_open_impl(y4m_input *_y4m,FILE *_fin){
     _y4m->aux_buf_sz=_y4m->aux_buf_read_sz=0;
     _y4m->convert=y4m_convert_null;
   }
-  else if(strcmp(_y4m->chroma_type,"420mpeg2")==0){
-    _y4m->src_c_dec_h=_y4m->dst_c_dec_h=_y4m->src_c_dec_v=_y4m->dst_c_dec_v=2;
-    _y4m->dst_buf_read_sz=_y4m->pic_w*_y4m->pic_h;
-    /*Chroma filter required: read into the aux buf first.*/
-    _y4m->aux_buf_sz=_y4m->aux_buf_read_sz=
-     2*((_y4m->pic_w+1)/2)*((_y4m->pic_h+1)/2);
-    _y4m->convert=y4m_convert_42xmpeg2_42xjpeg;
+  else if(strcmp(_y4m->chroma_type,"444p12")==0){
+    _y4m->src_c_dec_h=_y4m->dst_c_dec_h=_y4m->src_c_dec_v=_y4m->dst_c_dec_v=1;
+    _y4m->dst_buf_read_sz=_y4m->pic_w*_y4m->pic_h*3*2;
+    _y4m->depth=12;
+    /*Natively supported: no conversion required.*/
+    _y4m->aux_buf_sz=_y4m->aux_buf_read_sz=0;
+    _y4m->convert=y4m_convert_null;
   }
   else if(strcmp(_y4m->chroma_type,"420paldv")==0){
     _y4m->src_c_dec_h=_y4m->dst_c_dec_h=_y4m->src_c_dec_v=_y4m->dst_c_dec_v=2;
@@ -799,9 +830,64 @@ static void y4m_input_close(y4m_input *_y4m){
   free(_y4m->aux_buf);
 }
 
+static int y4m_fetch_into_vmaf_picture(y4m_input *_y4m, FILE *_fin, VmafPicture *pic) {
+  if (_y4m->convert != y4m_convert_null) {
+    fprintf(stderr, "y4m format requires conversion; direct read not supported.\n");
+    return -1;
+  }
+
+  /* Read and skip the frame header. */
+  char frame[6];
+  int ret = fread(frame, 1, 6, _fin);
+  if (ret < 6) return 0;
+  if (memcmp(frame, "FRAME", 5)) {
+    fprintf(stderr, "Loss of framing in YUV input data\n");
+    return -1;
+  }
+  if (frame[5] != '\n') {
+    char c;
+    int j;
+    for (j = 0; j < 79 && fread(&c, 1, 1, _fin) && c != '\n'; j++);
+    if (j == 79) {
+      fprintf(stderr, "Error parsing YUV frame header\n");
+      return -1;
+    }
+  }
+
+  const int shift = (int)pic->bpc - _y4m->depth;
+  if (shift < 0) return -1;
+  size_t bytes_per_sample = (_y4m->depth + 7) / 8;
+
+  for (unsigned i = 0; i < 3; i++) {
+    size_t row_bytes = (size_t)pic->w[i] * bytes_per_sample;
+    if (!shift && pic->stride[i] == (ptrdiff_t)row_bytes) {
+      if (fread(pic->data[i], 1, row_bytes * pic->h[i], _fin) != row_bytes * pic->h[i]) {
+        fprintf(stderr, "Error reading YUV frame data.\n");
+        return -1;
+      }
+    } else {
+      uint8_t *dst = pic->data[i];
+      for (unsigned j = 0; j < pic->h[i]; j++) {
+        if (fread(dst, 1, row_bytes, _fin) != row_bytes) {
+          fprintf(stderr, "Error reading YUV frame data.\n");
+          return -1;
+        }
+        for (unsigned k = pic->w[i]; shift && k--;)
+          ((uint16_t *)dst)[k] = (bytes_per_sample == 1 ? dst[k] :
+                                  ((uint16_t *)dst)[k]) << shift;
+        dst += pic->stride[i];
+      }
+    }
+  }
+
+  return 1;
+}
+
 OC_EXTERN const video_input_vtbl Y4M_INPUT_VTBL={
+  (raw_input_open_func)NULL,
   (video_input_open_func)y4m_input_open,
   (video_input_get_info_func)y4m_input_get_info,
   (video_input_fetch_frame_func)y4m_input_fetch_frame,
-  (video_input_close_func)y4m_input_close
+  (video_input_close_func)y4m_input_close,
+  (video_input_fetch_into_vmaf_picture_func)y4m_fetch_into_vmaf_picture
 };

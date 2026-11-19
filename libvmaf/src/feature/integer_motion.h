@@ -20,10 +20,21 @@
 #define FEATURE_MOTION_H_
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 static const uint16_t filter[5] = { 3571, 16004, 26386, 16004, 3571 };
 static const int filter_width = sizeof(filter) / sizeof(filter[0]);
+
+uint64_t motion_score_pipeline_8(const uint8_t *prev, ptrdiff_t prev_stride,
+                                  const uint8_t *cur, ptrdiff_t cur_stride,
+                                  int32_t *y_row, unsigned w, unsigned h,
+                                  unsigned bpc);
+
+uint64_t motion_score_pipeline_16(const uint8_t *prev_u8, ptrdiff_t prev_stride,
+                                   const uint8_t *cur_u8, ptrdiff_t cur_stride,
+                                   int32_t *y_row, unsigned w, unsigned h,
+                                   unsigned bpc);
 
 static inline uint32_t
 edge_16(bool horizontal, const uint16_t *src, int width,
@@ -33,7 +44,7 @@ edge_16(bool horizontal, const uint16_t *src, int width,
     uint32_t accum = 0;
 
     // MIRROR | ЯOЯЯIM
-    for (unsigned k = 0; k < filter_width; ++k) {
+    for (int k = 0; k < filter_width; ++k) {
         int i_tap = horizontal ? i : i - radius + k;
         int j_tap = horizontal ? j - radius + k : j;
 
@@ -41,12 +52,12 @@ edge_16(bool horizontal, const uint16_t *src, int width,
             if (j_tap < 0)
                 j_tap = -j_tap;
             else if (j_tap >= width)
-                j_tap = width - (j_tap - width + 1);
+                j_tap = width - (j_tap - width + 2);
         } else {
             if (i_tap < 0)
                 i_tap = -i_tap;
             else if (i_tap >= height)
-                i_tap = height - (i_tap - height + 1);
+                i_tap = height - (i_tap - height + 2);
         }
         accum += filter[k] * src[i_tap * stride + j_tap];
     }

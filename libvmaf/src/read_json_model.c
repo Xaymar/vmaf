@@ -17,15 +17,23 @@
  */
 
 #include "libvmaf/model.h"
+#include "log.h"
 #include "model.h"
 #include "pdjson.h"
 #include "svm.h"
 
 #include <errno.h>
 #include <stdlib.h>
+#ifdef HAVE_MALLOC_H
+#include <malloc.h>
+#endif
+#ifdef HAVE_ALLOCA_H
+#include <alloca.h>
+#endif
 #include <string.h>
 
-#define MAX_FEATURE_COUNT 32 //FIXME
+#define MAX_FEATURE_COUNT 64 //FIXME
+#define MAX_KNOT_COUNT 10 //FIXME
 
 static int parse_feature_opts_dicts(json_stream *s, VmafModel *model)
 {
@@ -59,6 +67,13 @@ static int parse_feature_opts_dicts(json_stream *s, VmafModel *model)
                     err = vmaf_dictionary_set(&(model->feature[i].opts_dict),
                                               key, "false", flags);
                 }
+                free(key);
+                if (err) return err;
+            } else if (json_peek(s) == JSON_STRING) {
+                const char *val = json_get_string(s, NULL);
+                const uint64_t flags = VMAF_DICT_DO_NOT_OVERWRITE;
+                int err = vmaf_dictionary_set(&(model->feature[i].opts_dict),
+                                              key, val, flags);
                 free(key);
                 if (err) return err;
             } else {
@@ -110,6 +125,42 @@ static int parse_slopes(json_stream *s, VmafModel *model)
     return 0;
 }
 
+static int parse_knots_list(struct json_stream *s, struct VmafModel *model, unsigned idx)
+{
+    unsigned i = 0;
+    while (json_peek(s) != JSON_ARRAY_END && !json_get_error(s)) {
+        if (json_next(s) != JSON_NUMBER)
+            return -EINVAL;
+        if (i >= 2)
+            return -EINVAL;
+        if (i == 0)
+            model->score_transform.knots.list[idx].x = json_get_number(s);
+        else
+            model->score_transform.knots.list[idx].y = json_get_number(s);
+        i++;
+    }
+
+    return 0;
+}
+
+static int parse_knots(json_stream *s, struct VmafModel *model)
+{
+    unsigned i = 0;
+    while (json_peek(s) != JSON_ARRAY_END && !json_get_error(s)) {
+        if (json_next(s) != JSON_ARRAY)
+            return -EINVAL;
+        if (i >= MAX_KNOT_COUNT)
+            return -EINVAL;
+        int err = parse_knots_list(s, model, i);
+        if (err) return err;
+        json_skip_until(s, JSON_ARRAY_END);
+        i++;
+    }
+    model->score_transform.knots.n_knots = i;
+    model->score_transform.knots.enabled = true;
+    return 0;
+}
+
 static int append_feature_name(VmafModel *model, const char *name,
                                unsigned index)
 {
@@ -141,11 +192,19 @@ static int parse_feature_names(json_stream *s, VmafModel *model)
 
 static int parse_score_transform(json_stream *s, VmafModel *model)
 {
+    model->score_transform.enabled = false;
     while (json_peek(s) != JSON_OBJECT_END && !json_get_error(s)) {
         if (json_next(s) != JSON_STRING)
             return -EINVAL;
 
         const char *key = json_get_string(s, NULL);
+
+        if (!strcmp(key, "enabled")) {
+            if (json_peek(s) != JSON_TRUE && json_peek(s) != JSON_FALSE)
+                return -EINVAL;
+            model->score_transform.enabled = (json_next(s) == JSON_TRUE);
+            continue;
+        }
 
         if (!strcmp(key, "p0")) {
             if (json_peek(s) == JSON_NULL) {
@@ -177,6 +236,20 @@ static int parse_score_transform(json_stream *s, VmafModel *model)
             } else if (json_next(s) == JSON_NUMBER) {
                 model->score_transform.p2.enabled = true;
                 model->score_transform.p2.value = json_get_number(s);
+            } else {
+                return -EINVAL;
+            }
+            continue;
+        }
+
+        if (!strcmp(key, "knots")) {
+            if (json_peek(s) == JSON_NULL) {
+                model->score_transform.knots.enabled = false;
+                model->score_transform.knots.n_knots = 0;
+            } else if (json_next(s) == JSON_ARRAY) {
+                int err = parse_knots(s, model);
+                if (err) return err;
+                json_skip_until(s, JSON_ARRAY_END);
             } else {
                 return -EINVAL;
             }
@@ -217,6 +290,202 @@ static int parse_libsvm_model(json_stream *s, VmafModel *model)
     return 0;
 }
 
+typedef struct { const char *name; unsigned val; } ColorName;
+
+static const ColorName color_range_names[] = {
+    { "limited", VMAF_COLOR_RANGE_LIMITED },
+    { "full",    VMAF_COLOR_RANGE_FULL },
+};
+
+static const ColorName color_primaries_names[] = {
+    { "bt709",    VMAF_COLOR_PRIMARIES_BT709 },
+    { "bt2020",   VMAF_COLOR_PRIMARIES_BT2020 },
+    { "smpte432", VMAF_COLOR_PRIMARIES_SMPTE432 },
+};
+
+static const ColorName color_trc_names[] = {
+    { "bt709",     VMAF_COLOR_TRC_BT709 },
+    { "smpte2084", VMAF_COLOR_TRC_SMPTE2084 },
+};
+
+static const ColorName color_matrix_names[] = {
+    { "bt709",    VMAF_COLOR_MATRIX_BT709 },
+    { "bt2020nc", VMAF_COLOR_MATRIX_BT2020_NCL },
+    { "ictcp",    VMAF_COLOR_MATRIX_ICTCP },
+};
+
+static int parse_color_name(json_stream *s, const ColorName *names,
+                            size_t n_names, unsigned *val)
+{
+    if (json_next(s) != JSON_STRING)
+        return -EINVAL;
+    const char *name = json_get_string(s, NULL);
+    for (size_t i = 0; i < n_names; i++) {
+        if (!strcmp(name, names[i].name)) {
+            *val = names[i].val;
+            return 0;
+        }
+    }
+    return -EINVAL;
+}
+
+#define PARSE_COLOR_FIELD(field, names, type)                               \
+    if (!strcmp(key, #field)) {                                             \
+        unsigned val;                                                       \
+        int err = parse_color_name(s, names, sizeof(names) / sizeof(*names),\
+                                   &val);                                   \
+        if (err) return err;                                                \
+        color->field = (type) val;                                          \
+        continue;                                                           \
+    }
+
+static int parse_colorspace(json_stream *s, VmafColor *color,
+                            const char *context)
+{
+    while (json_peek(s) != JSON_OBJECT_END && !json_get_error(s)) {
+        if (json_next(s) != JSON_STRING)
+            return -EINVAL;
+        const char *key = json_get_string(s, NULL);
+
+        PARSE_COLOR_FIELD(range, color_range_names, enum VmafColorRange)
+        PARSE_COLOR_FIELD(primaries, color_primaries_names,
+                          enum VmafColorPrimaries)
+        PARSE_COLOR_FIELD(trc, color_trc_names,
+                          enum VmafColorTransferCharacteristic)
+        PARSE_COLOR_FIELD(matrix, color_matrix_names,
+                          enum VmafColorMatrixCoefficients)
+
+        /* as in conversion_target, a key we do not know is an error */
+        vmaf_log(VMAF_LOG_LEVEL_ERROR,
+                 "unknown key \"%s\" in conversion_target %s\n", key,
+                 context);
+        return -EINVAL;
+    }
+
+    /* a conversion target must pin down all four attributes */
+    if (color->range == VMAF_COLOR_RANGE_UNKNOWN ||
+        color->primaries == VMAF_COLOR_PRIMARIES_UNKNOWN ||
+        color->trc == VMAF_COLOR_TRC_UNKNOWN ||
+        color->matrix == VMAF_COLOR_MATRIX_UNKNOWN)
+    {
+        return -EINVAL;
+    }
+    return 0;
+}
+
+/* "resolution": {"display": 1080 | 2160} */
+static int parse_resolution(json_stream *s, VmafModel *model)
+{
+    unsigned display_resolution = 0;
+    while (json_peek(s) != JSON_OBJECT_END && !json_get_error(s)) {
+        if (json_next(s) != JSON_STRING)
+            return -EINVAL;
+        const char *key = json_get_string(s, NULL);
+        if (strcmp(key, "display"))
+            return -EINVAL;
+        if (json_next(s) != JSON_NUMBER)
+            return -EINVAL;
+        const double value = json_get_number(s);
+        if (value == 1080)
+            display_resolution = 1080;
+        else if (value == 2160)
+            display_resolution = 2160;
+        else
+            return -EINVAL;
+    }
+
+    if (!display_resolution)
+        return -EINVAL;
+    model->conversion_target.display_resolution = display_resolution;
+    return 0;
+}
+
+static int parse_conversion_target(json_stream *s, VmafModel *model)
+{
+    bool have_colorspace = false;
+    while (json_peek(s) != JSON_OBJECT_END && !json_get_error(s)) {
+        if (json_next(s) != JSON_STRING)
+            return -EINVAL;
+        const char *key = json_get_string(s, NULL);
+
+        if (!strcmp(key, "colorspace")) {
+            if (json_next(s) != JSON_OBJECT)
+                return -EINVAL;
+            VmafColor color = { 0 };
+            int err = parse_colorspace(s, &color, "colorspace");
+            if (err) return err;
+            json_skip_until(s, JSON_OBJECT_END);
+            model->conversion_target.color = color;
+            have_colorspace = true;
+            continue;
+        }
+
+        if (!strcmp(key, "assumed_color_if_untagged")) {
+            if (json_next(s) != JSON_OBJECT)
+                return -EINVAL;
+            VmafColor color = { 0 };
+            int err = parse_colorspace(s, &color,
+                                     "assumed_color_if_untagged");
+            if (err) return err;
+            json_skip_until(s, JSON_OBJECT_END);
+            model->conversion_target.assumed_color = color;
+            model->conversion_target.has_assumed_color = true;
+            continue;
+        }
+
+        if (!strcmp(key, "pixel_format")) {
+            if (json_next(s) != JSON_STRING)
+                return -EINVAL;
+            const char *name = json_get_string(s, NULL);
+            if (!strcmp(name, "420"))
+                model->conversion_target.pix_fmt = VMAF_PIX_FMT_YUV420P;
+            else if (!strcmp(name, "422"))
+                model->conversion_target.pix_fmt = VMAF_PIX_FMT_YUV422P;
+            else if (!strcmp(name, "444"))
+                model->conversion_target.pix_fmt = VMAF_PIX_FMT_YUV444P;
+            else
+                return -EINVAL;
+            continue;
+        }
+
+        if (!strcmp(key, "bit_depth")) {
+            if (json_next(s) != JSON_NUMBER)
+                return -EINVAL;
+            const double bit_depth = json_get_number(s);
+            if (bit_depth < 8 || bit_depth > 16 ||
+                bit_depth != (double)(unsigned) bit_depth)
+            {
+                return -EINVAL;
+            }
+            model->conversion_target.bpc = (unsigned) bit_depth;
+            continue;
+        }
+
+        if (!strcmp(key, "resolution")) {
+            if (json_next(s) != JSON_OBJECT)
+                return -EINVAL;
+            int err = parse_resolution(s, model);
+            if (err) return err;
+            json_skip_until(s, JSON_OBJECT_END);
+            continue;
+        }
+
+        /*
+         * An unknown key is an error rather than skipped: a misspelled
+         * pixel_format or bit_depth, or a field from a newer model, would
+         * otherwise silently drop part of the conversion and change scores.
+         */
+        vmaf_log(VMAF_LOG_LEVEL_ERROR,
+                 "unknown key \"%s\" in conversion_target\n", key);
+        return -EINVAL;
+    }
+
+    if (!have_colorspace)
+        return -EINVAL;
+    model->conversion_target.enabled = true;
+    return 0;
+}
+
 static int parse_model_dict(json_stream *s, VmafModel *model,
                             enum VmafModelFlags flags)
 {
@@ -231,11 +500,24 @@ static int parse_model_dict(json_stream *s, VmafModel *model,
         if (!strcmp(key, "score_transform")) {
             if (json_next(s) != JSON_OBJECT)
                 return -EINVAL;
-            if (flags & VMAF_MODEL_FLAG_ENABLE_TRANSFORM) {
+
+            int err = parse_score_transform(s, model);
+            if (err) return err;
+
+            if (!model->score_transform.enabled &&
+            (flags & VMAF_MODEL_FLAG_ENABLE_TRANSFORM)) {
                 model->score_transform.enabled = true;
-                int err = parse_score_transform(s, model);
-                if (err) return err;
             }
+
+            json_skip_until(s, JSON_OBJECT_END);
+            continue;
+        }
+
+        if (!strcmp(key, "conversion_target")) {
+            if (json_next(s) != JSON_OBJECT)
+                return -EINVAL;
+            int err = parse_conversion_target(s, model);
+            if (err) return err;
             json_skip_until(s, JSON_OBJECT_END);
             continue;
         }
@@ -281,6 +563,14 @@ static int parse_model_dict(json_stream *s, VmafModel *model,
                 model->score_clip.max = json_get_number(s);
             }
             json_skip_until(s, JSON_ARRAY_END);
+            continue;
+        }
+
+        if (!strcmp(key, "chroma_correction_parameter")) {
+            if (json_next(s) != JSON_NUMBER)
+                return -EINVAL;
+            model->chroma_from_luma.enabled = true;
+            model->chroma_from_luma.chroma_correction_parameter = json_get_number(s);
             continue;
         }
 
@@ -365,12 +655,19 @@ static int vmaf_read_json_model(VmafModel **model, VmafModelConfig *cfg,
     VmafModel *const m = *model = malloc(sizeof(*m));
     if (!m) return -ENOMEM;
     memset(m, 0, sizeof(*m));
+
     const size_t model_sz = sizeof(*m->feature) * MAX_FEATURE_COUNT;
     m->feature = malloc(model_sz);
     if (!m->feature) return -ENOMEM;
     memset(m->feature, 0, model_sz);
+
     m->name = vmaf_model_generate_name(cfg);
     if (!m->name) return -ENOMEM;
+
+    const size_t knots_sz = sizeof(VmafPoint) * MAX_KNOT_COUNT;
+    m->score_transform.knots.list = malloc(knots_sz);
+    if (!m->score_transform.knots.list) return -ENOMEM;
+    memset(m->score_transform.knots.list, 0, knots_sz);
 
     return model_parse(s, m, cfg->flags);
 }
@@ -416,9 +713,9 @@ static int model_collection_parse(json_stream *s, VmafModel **model,
     if (!c.name) return -ENOMEM;
 
     const size_t cfg_name_sz = strlen(name) + 5 + 1;
-    char cfg_name[cfg_name_sz];
+    char *cfg_name = alloca(cfg_name_sz);
 
-    const size_t generated_key_sz = 4 + 1;
+    enum { generated_key_sz = 4 + 1 };
     char generated_key[generated_key_sz];
 
     unsigned i = 0;
@@ -442,14 +739,19 @@ static int model_collection_parse(json_stream *s, VmafModel **model,
                 if (err) return err;
             }
 
-            sprintf(c.name, "%s_%04d", name, ++i);
+            const int n = snprintf((char*)c.name, cfg_name_sz, "%s_%04d",
+                                   name, ++i);
+            if (n < 0 || (size_t)n >= cfg_name_sz) {
+                free((char*)name);
+                return -EINVAL;
+            }
             continue;
         }
 
         json_skip(s);
     }
 
-    free(name);
+    free((char*)name);
     if (!(*model_collection)) return -EINVAL;
     return err;
 }

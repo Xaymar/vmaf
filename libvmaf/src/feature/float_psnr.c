@@ -37,6 +37,8 @@ typedef struct PsnrState {
 static int init(VmafFeatureExtractor *fex, enum VmafPixelFormat pix_fmt,
                 unsigned bpc, unsigned w, unsigned h)
 {
+    (void)pix_fmt;
+
     PsnrState *s = fex->priv;
     s->float_stride = ALIGN_CEIL(w * sizeof(float));
     s->ref = aligned_malloc(s->float_stride * h, 32);
@@ -79,8 +81,8 @@ static int extract(VmafFeatureExtractor *fex,
     (void) ref_pic_90;
     (void) dist_pic_90;
 
-    picture_copy(s->ref, s->float_stride, ref_pic, 0, ref_pic->bpc);
-    picture_copy(s->dist, s->float_stride, dist_pic, 0, dist_pic->bpc);
+    picture_copy(s->ref, s->float_stride, ref_pic, 0, ref_pic->bpc, 0);
+    picture_copy(s->dist, s->float_stride, dist_pic, 0, dist_pic->bpc, 0);
 
     double score;
     err = compute_psnr(s->ref, s->dist, ref_pic->w[0], ref_pic->h[0],

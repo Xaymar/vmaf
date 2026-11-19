@@ -100,6 +100,9 @@ static int init(VmafFeatureExtractor *fex, enum VmafPixelFormat pix_fmt,
     CiedeState *s = fex->priv;
     int err = 0;
 
+    if (pix_fmt == VMAF_PIX_FMT_YUV400P)
+        return -EINVAL;
+
     if (pix_fmt == VMAF_PIX_FMT_YUV444P)
         return 0;
 
@@ -125,7 +128,7 @@ static float get_h_prime(const float x, const float y)
 {
     if ((x == 0.0) && (y == 0.0))
         return 0.0;
-    float hue_angle = atan2f(x, y);
+    float hue_angle = atan2(x, y);
     if (hue_angle < 0.0)
         hue_angle += 2. * M_PI;
     return hue_angle;
@@ -156,10 +159,10 @@ static float get_upcase_h_bar_prime(const float h_prime_1,
 static float get_upcase_t(const float upcase_h_bar_prime)
 {
     return 1.0 -
-           0.17 * cosf(upcase_h_bar_prime - M_PI / 6.0) +
-           0.24 * cosf(2.0 * upcase_h_bar_prime) +
-           0.32 * cosf(3.0 * upcase_h_bar_prime + M_PI / 30.0) -
-           0.20 * cosf(4.0 * upcase_h_bar_prime - 7.0 * M_PI / 20.0);
+           0.17 * cos(upcase_h_bar_prime - M_PI / 6.0) +
+           0.24 * cos(2.0 * upcase_h_bar_prime) +
+           0.32 * cos(3.0 * upcase_h_bar_prime + M_PI / 30.0) -
+           0.20 * cos(4.0 * upcase_h_bar_prime - 7.0 * M_PI / 20.0);
 }
 
 static float radians_to_degrees(const float radians)
@@ -219,7 +222,7 @@ static float ciede2000(LABColor color_1, LABColor color_2, KSubArgs ksub)
     const float h_prime_2 = get_h_prime(color_2.b, a_prime_2);
     const float delta_h_prime = get_delta_h_prime(c1, c2, h_prime_1, h_prime_2);
     const float delta_upcase_h_prime =
-            2.0 * sqrtf(c_prime_1 * c_prime_2) * sinf(delta_h_prime / 2.0);
+            2.0 * sqrt(c_prime_1 * c_prime_2) * sin(delta_h_prime / 2.0);
     const float upcase_h_bar_prime =
         get_upcase_h_bar_prime(h_prime_1, h_prime_2);
     const float upcase_t = get_upcase_t(upcase_h_bar_prime);
@@ -233,32 +236,32 @@ static float ciede2000(LABColor color_1, LABColor color_2, KSubArgs ksub)
                 pow(hue, 2) + r_sub_t * chroma * hue);
 }
 
-static float pow_2_4(float x)
+static double pow_2_4(double x)
 {
-    return powf(x, 2.4);
+    return pow(x, 2.4);
 }
 
-static float rgb_to_xyz_map(float c)
+static double rgb_to_xyz_map(double c)
 {
     if (c > 10. / 255.) {
-        const float A = 0.055;
-        const float D = 1.0 / 1.055;
+        const double A = 0.055;
+        const double D = 1.0 / 1.055;
         return pow_2_4((c + A) * D);
     } else {
-        const float D = 1.0 / 12.92;
+        const double D = 1.0 / 12.92;
         return (c * D);
     }
 }
 
-static float cbrt_approx(float c)
+static double cbrt_approx(double c)
 {
-    return powf(c, 1.0 / 3.0);
+    return pow(c, 1.0 / 3.0);
 }
 
-static float xyz_to_lab_map(float c)
+static float xyz_to_lab_map(double c)
 {
-    const float KAPPA = 24389.0 / 27.0;
-    const float EPSILON = 216.0 / 24389.0;
+    const double KAPPA = 24389.0 / 27.0;
+    const double EPSILON = 216.0 / 24389.0;
 
     if (c > EPSILON) {
         return cbrt_approx(c);
@@ -267,28 +270,28 @@ static float xyz_to_lab_map(float c)
     }
 }
 
-static LABColor get_lab_color(float y, float u, float v, unsigned bpc)
+static LABColor get_lab_color(double y, double u, double v, unsigned bpc)
 {
-    const float scale = 1 << (bpc - 8);
+    const double scale = 1 << (bpc - 8);
 
     y = (y - 16.  * scale) * (1. / (219. * scale));
     u = (u - 128. * scale) * (1. / (224. * scale));
     v = (v - 128. * scale) * (1. / (224. * scale));
 
     // Assumes BT.709
-    float r = y + 1.28033 * v;
-    float g = y - 0.21482 * u - 0.38059 * v;
-    float b = y + 2.12798 * u;
+    double r = y + 1.28033 * v;
+    double g = y - 0.21482 * u - 0.38059 * v;
+    double b = y + 2.12798 * u;
 
     r = rgb_to_xyz_map(r);
     g = rgb_to_xyz_map(g);
     b = rgb_to_xyz_map(b);
 
-    float x = r * 0.4124564390896921 + g * 0.357576077643909 +
+    double x = r * 0.4124564390896921 + g * 0.357576077643909 +
               b * 0.18043748326639894;
           y = r * 0.21267285140562248 + g * 0.715152155287818 +
               b * 0.07217499330655958;
-    float z = r * 0.019333895582329317 + g * 0.119192025881303 +
+    double z = r * 0.019333895582329317 + g * 0.119192025881303 +
               b * 0.9503040785363677;
 
     x = xyz_to_lab_map(x * (1.0 / 0.95047));
@@ -313,44 +316,50 @@ static int extract(VmafFeatureExtractor *fex,
     (void) ref_pic_90;
     (void) dist_pic_90;
 
+    VmafPicture *ref;
+    VmafPicture *dist;
+
     if (ref_pic->pix_fmt == VMAF_PIX_FMT_YUV444P) {
-        s->ref = *ref_pic;
-        s->dist = *dist_pic;
+        // Reuse the provided buffers
+        ref = ref_pic;
+        dist = dist_pic;
     } else {
-        s->scale_chroma_planes(ref_pic, &s->ref);
-        s->scale_chroma_planes(dist_pic, &s->dist);
+        ref = &s->ref;
+        dist = &s->dist;
+        s->scale_chroma_planes(ref_pic, ref);
+        s->scale_chroma_planes(dist_pic, dist);
     }
 
     double de00_sum = 0.;
-    for (unsigned i = 0; i < s->ref.h[0]; i++) {
-        for (unsigned j = 0; j < s->ref.w[0]; j++) {
+    for (unsigned i = 0; i < ref->h[0]; i++) {
+        for (unsigned j = 0; j < ref->w[0]; j++) {
             float r_y, r_u, r_v, d_y, d_u, d_v;
 
-            switch (s->ref.bpc) {
+            switch (ref->bpc) {
             case 8:
-                r_y = ((uint8_t*)s->ref.data[0])[i * s->ref.stride[0] + j];
-                r_u = ((uint8_t*)s->ref.data[1])[i * s->ref.stride[1] + j];
-                r_v = ((uint8_t*)s->ref.data[2])[i * s->ref.stride[2] + j];
-                d_y = ((uint8_t*)s->dist.data[0])[i * s->dist.stride[0] + j];
-                d_u = ((uint8_t*)s->dist.data[1])[i * s->dist.stride[1] + j];
-                d_v = ((uint8_t*)s->dist.data[2])[i * s->dist.stride[2] + j];
+                r_y = ((uint8_t*)ref->data[0])[i * ref->stride[0] + j];
+                r_u = ((uint8_t*)ref->data[1])[i * ref->stride[1] + j];
+                r_v = ((uint8_t*)ref->data[2])[i * ref->stride[2] + j];
+                d_y = ((uint8_t*)dist->data[0])[i * dist->stride[0] + j];
+                d_u = ((uint8_t*)dist->data[1])[i * dist->stride[1] + j];
+                d_v = ((uint8_t*)dist->data[2])[i * dist->stride[2] + j];
                 break;
             case 10:
             case 12:
             case 16:
-                r_y = ((uint16_t*)s->ref.data[0])[i * (s->ref.stride[0] / 2) + j];
-                r_u = ((uint16_t*)s->ref.data[1])[i * (s->ref.stride[1] / 2) + j];
-                r_v = ((uint16_t*)s->ref.data[2])[i * (s->ref.stride[2] / 2) + j];
-                d_y = ((uint16_t*)s->dist.data[0])[i * (s->dist.stride[0] / 2) + j];
-                d_u = ((uint16_t*)s->dist.data[1])[i * (s->dist.stride[1] / 2) + j];
-                d_v = ((uint16_t*)s->dist.data[2])[i * (s->dist.stride[2] / 2) + j];
+                r_y = ((uint16_t*)ref->data[0])[i * (ref->stride[0] / 2) + j];
+                r_u = ((uint16_t*)ref->data[1])[i * (ref->stride[1] / 2) + j];
+                r_v = ((uint16_t*)ref->data[2])[i * (ref->stride[2] / 2) + j];
+                d_y = ((uint16_t*)dist->data[0])[i * (dist->stride[0] / 2) + j];
+                d_u = ((uint16_t*)dist->data[1])[i * (dist->stride[1] / 2) + j];
+                d_v = ((uint16_t*)dist->data[2])[i * (dist->stride[2] / 2) + j];
                 break;
             default:
                 return -EINVAL;
             }
 
-            const LABColor color_1 = get_lab_color(r_y, r_u, r_v, s->ref.bpc);
-            const LABColor color_2 = get_lab_color(d_y, d_u, d_v, s->dist.bpc);
+            const LABColor color_1 = get_lab_color(r_y, r_u, r_v, ref->bpc);
+            const LABColor color_2 = get_lab_color(d_y, d_u, d_v, dist->bpc);
             const KSubArgs default_ksub = { .l = 0.65, .c = 1.0, .h = 4.0 };
             const float de00 = ciede2000(color_1, color_2, default_ksub);
             de00_sum += de00;
@@ -366,8 +375,10 @@ static int extract(VmafFeatureExtractor *fex,
 static int close(VmafFeatureExtractor *fex)
 {
     CiedeState *s = fex->priv;
-    vmaf_picture_unref(&s->ref);
-    vmaf_picture_unref(&s->dist);
+    if (s->ref.data[0] && s->dist.data[0]) {
+        vmaf_picture_unref(&s->ref);
+        vmaf_picture_unref(&s->dist);
+    }
     return 0;
 }
 

@@ -52,8 +52,8 @@ class TypeVersionEnabled(object):
 
     def _assert_type_version(self):
 
-        assert re.match(r"^[a-zA-Z0-9_]+$", self.TYPE), \
-            "TYPE can only contains alphabets, numbers and underscore (_)."
+        assert re.match(r"^[a-zA-Z0-9._-]+$", self.TYPE), \
+            "TYPE can only contains alphabets, numbers, dot (.), hyphen(-) and underscore (_)."
 
         assert re.match(r"^[a-zA-Z0-9._-]+$", self.VERSION), \
             "VERSION can only contains alphabets, numbers, dot (.), hyphen(-) and underscore (_)."
@@ -79,10 +79,12 @@ class TypeVersionEnabled(object):
                 matched_subclasses.append(subclass)
         assert len(matched_subclasses) == 1, \
             "Must have one and only one subclass of {class_name} with type " \
-            "{type}, but got {num}".format(
+            "{type}, but got {num}: {classes}".format(
                 class_name=cls.__name__,
                 type=subclass_type,
-                num=len(matched_subclasses))
+                num=len(matched_subclasses),
+                classes=[clss.__name__ for clss in matched_subclasses],
+            )
         return matched_subclasses[0]
 
     @classmethod
@@ -92,5 +94,3 @@ class TypeVersionEnabled(object):
         for subclass in subclasses:
             subsubclasses += subclass.get_subclasses_recursively()
         return subclasses + subsubclasses
-
-

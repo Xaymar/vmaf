@@ -1,7 +1,19 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#ifdef HAVE_MALLOC_H
+#include <malloc.h> // alloca()
+#endif
+#ifdef HAVE_ALLOCA_H
+#include <alloca.h>
+#endif
+#ifdef _MSC_VER
+#include <io.h>
+#define isatty _isatty
+#define fileno _fileno
+#else
 #include <unistd.h>
+#endif
 
 #include "cli_parse.h"
 #include "spinner.h"
@@ -9,6 +21,12 @@
 
 #include "libvmaf/picture.h"
 #include "libvmaf/libvmaf.h"
+#ifdef HAVE_VULKAN
+#include "libvmaf/libvmaf_vulkan.h"
+#endif
+#ifdef HAVE_CUDA
+#include "libvmaf/libvmaf_cuda.h"
+#endif
 
 static enum VmafPixelFormat pix_fmt_map(int pf)
 {
@@ -24,7 +42,7 @@ static enum VmafPixelFormat pix_fmt_map(int pf)
     }
 }
 
-static int validate_videos(video_input *vid1, video_input *vid2)
+static int validate_videos(video_input *vid1, video_input *vid2, bool common_bitdepth)
 {
     int err_cnt = 0;
 
@@ -32,11 +50,10 @@ static int validate_videos(video_input *vid1, video_input *vid2)
     video_input_get_info(vid1, &info1);
     video_input_get_info(vid2, &info2);
 
-    if ((info1.frame_w != info2.frame_w) || (info1.frame_h != info2.frame_h)) {
-        fprintf(stderr, "dimensions do not match: %dx%d, %dx%d\n",
-                info1.frame_w, info1.frame_h, info2.frame_w, info2.frame_h);
-        err_cnt++;
-    }
+    /*
+     * Different sizes are not checked here: libvmaf rejects them unless the
+     * models scale their inputs, which it can only tell once they are loaded.
+     */
 
     if (info1.pixel_fmt != info2.pixel_fmt) {
         fprintf(stderr, "pixel formats do not match: %d, %d\n",
@@ -49,7 +66,7 @@ static int validate_videos(video_input *vid1, video_input *vid2)
         err_cnt++;
     }
 
-    if (info1.depth != info2.depth) {
+    if (!common_bitdepth && info1.depth != info2.depth) {
         fprintf(stderr, "bitdepths do not match: %d, %d\n",
                 info1.depth, info2.depth);
         err_cnt++;
@@ -65,59 +82,33 @@ static int validate_videos(video_input *vid1, video_input *vid2)
     return err_cnt;
 }
 
-static int fetch_picture(video_input *vid, VmafPicture *pic)
+/*
+ * The picture pool holds pictures of the reference's size. A picture of any
+ * other size is allocated on its own.
+ */
+static int fetch_picture(VmafContext *vmaf, video_input *vid, VmafPicture *pic,
+                         VmafColor color, bool pooled, unsigned bitdepth)
 {
     int ret;
-    video_input_ycbcr ycbcr;
-    video_input_info info;
-
-    ret = video_input_fetch_frame(vid, ycbcr, NULL);
-    if (ret < 1) return !ret;
-
-    video_input_get_info(vid, &info);
-    ret = vmaf_picture_alloc(pic, pix_fmt_map(info.pixel_fmt), info.depth,
-                             info.pic_w, info.pic_h);
+    if (pooled) {
+        ret = vmaf_fetch_preallocated_picture(vmaf, pic);
+    } else {
+        video_input_info info;
+        video_input_get_info(vid, &info);
+        ret = vmaf_picture_alloc(pic, pix_fmt_map(info.pixel_fmt), bitdepth,
+                                 info.pic_w, info.pic_h);
+    }
     if (ret) {
-        fprintf(stderr, "problem allocating picture.\n");
+        fprintf(stderr, "problem fetching picture from pool.\n");
         return -1;
     }
 
-    if (info.depth == 8) {
-        for (unsigned i = 0; i < 3; i++) {
-            int xdec = i&&!(info.pixel_fmt&1);
-            int ydec = i&&!(info.pixel_fmt&2);
-            int xstride = info.depth > 8 ? 2 : 1;
-            uint8_t *ycbcr_data = ycbcr[i].data +
-                (info.pic_y >> ydec) * ycbcr[i].stride +
-                (info.pic_x * xstride >> xdec);
-            // ^ gross, but this is how the daala y4m API works. FIXME.
-            uint8_t *pic_data = pic->data[i];
-
-            for (unsigned j = 0; j < pic->h[i]; j++) {
-                memcpy(pic_data, ycbcr_data, sizeof(*pic_data) * pic->w[i]);
-                pic_data += pic->stride[i];
-                ycbcr_data += ycbcr[i].stride;
-            }
-        }
-    } else {
-        for (unsigned i = 0; i < 3; i++) {
-            int xdec = i&&!(info.pixel_fmt&1);
-            int ydec = i&&!(info.pixel_fmt&2);
-            int xstride = info.depth > 8 ? 2 : 1;
-            uint16_t *ycbcr_data = (uint16_t*) ycbcr[i].data +
-                (info.pic_y >> ydec) * (ycbcr[i].stride / 2) +
-                (info.pic_x * xstride >> xdec);
-            // ^ gross, but this is how the daala y4m API works. FIXME.
-            uint16_t *pic_data = pic->data[i];
-
-            for (unsigned j = 0; j < pic->h[i]; j++) {
-                memcpy(pic_data, ycbcr_data, sizeof(*pic_data) * pic->w[i]);
-                pic_data += pic->stride[i] / 2;
-                ycbcr_data += ycbcr[i].stride / 2;
-            }
-        }
+    ret = video_input_fetch_into_vmaf_picture(vid, pic);
+    if (ret < 1) {
+        vmaf_picture_unref(pic);
+        return ret < 0 ? -1 : 1;
     }
-
+    pic->color = color;
     return 0;
 }
 
@@ -147,8 +138,8 @@ int main(int argc, char *argv[])
 
     video_input vid_ref;
     if (c.use_yuv) {
-        err = raw_input_open(&vid_ref, file_ref,
-                             c.width, c.height, c.pix_fmt, c.bitdepth);
+        err = raw_input_open(&vid_ref, file_ref, c.width_ref, c.height_ref,
+                             c.pix_fmt, c.bitdepth);
     } else {
         err = video_input_open(&vid_ref, file_ref);
     }
@@ -159,8 +150,8 @@ int main(int argc, char *argv[])
 
     video_input vid_dist;
     if (c.use_yuv) {
-        err = raw_input_open(&vid_dist, file_dist,
-                             c.width, c.height, c.pix_fmt, c.bitdepth);
+        err = raw_input_open(&vid_dist, file_dist, c.width_dist, c.height_dist,
+                             c.pix_fmt, c.bitdepth);
     } else {
         err = video_input_open(&vid_dist, file_dist);
     }
@@ -169,11 +160,21 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    err = validate_videos(&vid_ref, &vid_dist);
+    err = validate_videos(&vid_ref, &vid_dist, c.common_bitdepth);
     if (err) {
         fprintf(stderr, "videos are incompatible, %d %s.\n",
                 err, err == 1 ? "problem" : "problems");
         return -1;
+    }
+
+    int common_bitdepth;
+    if (c.use_yuv) {
+        common_bitdepth = c.bitdepth;
+    } else {
+        video_input_info info1, info2;
+        video_input_get_info(&vid_ref, &info1);
+        video_input_get_info(&vid_dist, &info2);
+        common_bitdepth = info1.depth > info2.depth ? info1.depth : info2.depth;
     }
 
     VmafConfiguration cfg = {
@@ -181,6 +182,7 @@ int main(int argc, char *argv[])
         .n_threads = c.thread_cnt,
         .n_subsample = c.subsample,
         .cpumask = c.cpumask,
+        .gpumask = c.gpumask,
     };
 
     VmafContext *vmaf;
@@ -188,6 +190,71 @@ int main(int argc, char *argv[])
     if (err) {
         fprintf(stderr, "problem initializing VMAF context\n");
         return -1;
+    }
+
+#ifdef HAVE_CUDA
+    VmafCudaState *cu_state;
+    VmafCudaConfiguration cuda_cfg = { 0 };
+    if (c.gpumask != ((unsigned)~0)) {
+        err = vmaf_cuda_state_init(&cu_state, cuda_cfg);
+        if (err) {
+            fprintf(stderr, "problem during vmaf_cuda_state_init, using CPU\n");
+        } else {
+            err |= vmaf_cuda_import_state(vmaf, cu_state);
+            if (err) {
+                fprintf(stderr, "problem during vmaf_cuda_import_state\n");
+                return -1;
+            }
+        }
+    }
+#endif
+
+#ifdef HAVE_VULKAN
+    VmafVulkanState *vk_state = NULL;
+    if (c.vulkan) {
+        VmafVulkanConfiguration vk_cfg = { .device_index = c.vulkan_device };
+        err = vmaf_vulkan_state_init(&vk_state, vk_cfg);
+        if (err) {
+            fprintf(stderr, "problem during vmaf_vulkan_state_init, using CPU\n");
+        } else {
+            err = vmaf_vulkan_import_state(vmaf, vk_state);
+            if (err) {
+                fprintf(stderr, "problem during vmaf_vulkan_import_state\n");
+                return -1;
+            }
+        }
+    }
+#else
+    if (c.vulkan)
+        fprintf(stderr, "built without Vulkan, using CPU\n");
+#endif
+
+    // Preallocate picture pool to avoid allocation overhead
+    video_input_info info, info_dist;
+    video_input_get_info(&vid_ref, &info);
+    video_input_get_info(&vid_dist, &info_dist);
+    const bool dist_pooled = info_dist.pic_w == info.pic_w &&
+                             info_dist.pic_h == info.pic_h;
+
+    VmafPictureConfiguration pic_cfg = {
+        .pic_params = {
+            .w = info.pic_w,
+            .h = info.pic_h,
+            .bpc = common_bitdepth,
+            .pix_fmt = pix_fmt_map(info.pixel_fmt),
+        },
+        .pic_cnt = c.thread_cnt > 0 ? (c.thread_cnt + 1) * 2 + 1 : 4,
+    };
+
+    err = vmaf_preallocate_pictures(vmaf, pic_cfg);
+    if (err) {
+        fprintf(stderr, "problem during vmaf_preallocate_pictures\n");
+        return -1;
+    }
+
+    if (istty && !c.quiet) {
+        fprintf(stderr, "picture pool: %d pictures pre-allocated\n",
+                pic_cfg.pic_cnt);
     }
 
     VmafModel **model;
@@ -198,10 +265,10 @@ int main(int argc, char *argv[])
     VmafModelCollection **model_collection;
     const size_t model_collection_sz =
         sizeof(*model_collection) * c.model_cnt;
-    model_collection = malloc(model_sz);
+    model_collection = malloc(model_collection_sz);
     memset(model_collection, 0, model_collection_sz);
 
-    const char *model_collection_label[c.model_cnt];
+    const char **model_collection_label = alloca(c.model_cnt * sizeof(*model_collection_label));
     unsigned model_collection_cnt = 0;
 
     for (unsigned i = 0; i < c.model_cnt; i++) {
@@ -306,26 +373,54 @@ int main(int argc, char *argv[])
         }
     }
 
+    VmafPicture pic_ref, pic_dist;
+
+    for (unsigned i = 0; i < c.frame_skip_ref; i++) {
+        if (!fetch_picture(vmaf, &vid_ref, &pic_ref, c.color_ref, true,
+                           common_bitdepth))
+            vmaf_picture_unref(&pic_ref);
+    }
+
+    for (unsigned i = 0; i < c.frame_skip_dist; i++) {
+        if (!fetch_picture(vmaf, &vid_dist, &pic_dist, c.color_dist,
+                           dist_pooled, common_bitdepth))
+            vmaf_picture_unref(&pic_dist);
+    }
+
     float fps = 0.;
     const time_t t0 = clock();
     unsigned picture_index;
     for (picture_index = 0 ;; picture_index++) {
+
+        if (c.frame_cnt && picture_index >= c.frame_cnt)
+            break;
+
         VmafPicture pic_ref, pic_dist;
-        int ret1 = fetch_picture(&vid_ref, &pic_ref);
-        int ret2 = fetch_picture(&vid_dist, &pic_dist);
+        int ret1 = fetch_picture(vmaf, &vid_ref, &pic_ref, c.color_ref, true,
+                                common_bitdepth);
+        int ret2 = fetch_picture(vmaf, &vid_dist, &pic_dist, c.color_dist,
+                                dist_pooled, common_bitdepth);
 
         if (ret1 && ret2) {
             break;
         } else if (ret1 < 0 || ret2 < 0) {
             fprintf(stderr, "\nproblem while reading pictures\n");
+            if (!ret1) vmaf_picture_unref(&pic_ref);
+            if (!ret2) vmaf_picture_unref(&pic_dist);
             break;
         } else if (ret1) {
             fprintf(stderr, "\n\"%s\" ended before \"%s\".\n",
                     c.path_ref, c.path_dist);
+            int err = vmaf_picture_unref(&pic_dist);
+            if (err)
+                fprintf(stderr, "\nproblem during vmaf_picture_unref\n");
             break;
         } else if (ret2) {
             fprintf(stderr, "\n\"%s\" ended before \"%s\".\n",
                     c.path_dist, c.path_ref);
+            int err = vmaf_picture_unref(&pic_ref);
+            if (err)
+                fprintf(stderr, "\nproblem during vmaf_picture_unref\n");
             break;
         }
 
@@ -414,6 +509,9 @@ int main(int argc, char *argv[])
     video_input_close(&vid_ref);
     video_input_close(&vid_dist);
     vmaf_close(vmaf);
+#ifdef HAVE_VULKAN
+    if (vk_state) vmaf_vulkan_state_free(&vk_state);
+#endif
     cli_free(&c);
     return err;
 }

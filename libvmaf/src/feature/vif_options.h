@@ -33,10 +33,17 @@
 /* Whether to keep the borders of the image after filtering. */
 #define VIF_OPT_HANDLE_BORDERS
 
-/* Whether to use a 1-D formulation of the Gaussian filter. */
-#define VIF_OPT_FILTER_1D
-
 /* Enhancement gain imposed on vif, must be >= 1.0, where 1.0 means the gain is completely disabled */
 #define DEFAULT_VIF_ENHN_GAIN_LIMIT (100.0)
+
+/* Scaling factor for the Gaussian kernel, where 2.0 means multiplying the
+ * standard deviation by 2 and expand the kernel length accordingly. */
+#define DEFAULT_VIF_KERNELSCALE (1.0)
+
+/* Scaling factor for the frame, where 2.0 means multiplying the frame width and height by 2 */
+#define DEFAULT_VIF_PRESCALE (1.0)
+
+/* Scaling method for the frame, supported options: [nearest, bilinear, bicubic, lanczos4] */
+#define DEFAULT_VIF_PRESCALE_METHOD ("nearest")
 
 #endif /* VIF_OPTIONS_H_ */

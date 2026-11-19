@@ -1,4 +1,5 @@
 import os
+import sys
 from time import sleep
 
 import numpy as np
@@ -11,12 +12,6 @@ from vmaf.core.result import RawResult
 
 __copyright__ = "Copyright 2016-2020, Netflix, Inc."
 __license__ = "BSD+Patent"
-
-try:
-    basestring
-except NameError:
-    # TODO: remove this once python2 support is dropped
-    basestring = str
 
 
 class RawExtractor(Executor):
@@ -46,18 +41,14 @@ class AssetExtractor(RawExtractor):
         pass
 
     @override(Executor)
-    def _open_ref_workfile(self, asset, fifo_mode):
-        # do nothing
-        pass
+    def _open_ref_workfile(self, asset, fifo_mode, open_sem=None):
+        if open_sem is not None:
+            open_sem.release()
 
     @override(Executor)
-    def _open_dis_workfile(self, asset, fifo_mode):
-        # do nothing
-        pass
-
-    @override(Executor)
-    def _wait_for_workfiles(self, asset):
-        pass
+    def _open_dis_workfile(self, asset, fifo_mode, open_sem=None):
+        if open_sem is not None:
+            open_sem.release()
 
     def _generate_result(self, asset):
         # do nothing
@@ -86,7 +77,7 @@ class DisYUVRawVideoExtractor(H5pyMixin, RawExtractor):
             return 'yuv'
         else:
             channels = self.optional_dict['channels']
-            assert isinstance(channels, basestring)
+            assert isinstance(channels, str)
             channels = set(channels.lower())
             assert channels.issubset(set('yuv'))
             return ''.join(channels)
@@ -107,21 +98,10 @@ class DisYUVRawVideoExtractor(H5pyMixin, RawExtractor):
         self.assert_h5py_file()
 
     @override(Executor)
-    def _open_ref_workfile(self, asset, fifo_mode):
+    def _open_ref_workfile(self, asset, fifo_mode, open_sem=None):
         # do nothing
-        pass
-
-    @override(Executor)
-    def _wait_for_workfiles(self, asset):
-        # Override Executor._wait_for_workfiles to skip ref_workfile_path
-        # wait til workfile paths being generated
-        for i in range(10):
-            if os.path.exists(asset.dis_workfile_path):
-                break
-            sleep(0.1)
-        else:
-            raise RuntimeError("dis video workfile path {} is missing.".format(
-                asset.dis_workfile_path))
+        if open_sem is not None:
+            open_sem.release()
 
     def _generate_result(self, asset):
         quality_w, quality_h = asset.quality_width_height

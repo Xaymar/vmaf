@@ -33,7 +33,7 @@ class PerfMetric(TypeVersionEnabled):
         """
         Performance metric on quality metrics
         :param groundtruths: either list of real numbers (aggregate scores like
-        MOS or DMOS or MLE), or list of list of real numbers (list of raw scores)
+        MOS or DMOS or MLE), or list of lists of real numbers (list of raw scores)
         :param predictions: list of real numbers
         :return:
         """
@@ -57,7 +57,7 @@ class PerfMetric(TypeVersionEnabled):
 
 class RawScorePerfMetric(PerfMetric):
     """
-    Groundtruth is a list of raw scores (list of list of real numbers)
+    Groundtruth is a list of raw scores (list of lists of real numbers)
     """
     @override(PerfMetric)
     def _assert_args(self):
@@ -463,8 +463,8 @@ class ResolvingPowerPerfMetric(RawScorePerfMetric):
 
         vqm = np.array(predictions)
         num_viewers = np.array(list(map(lambda groundtruth: len(groundtruth), groundtruths)))
-        mos = np.mean(groundtruths, axis=1)
-        std = np.std(groundtruths, axis=1, ddof=deg_of_freedom)
+        mos = np.array(list(map(lambda groundtruth: np.nanmean(groundtruth), groundtruths)))
+        std = np.array(list(map(lambda groundtruth: np.nanstd(groundtruth, ddof=deg_of_freedom), groundtruths)))
 
         # variance = std.^2;
         variance = std**2
@@ -557,7 +557,7 @@ class ResolvingPowerPerfMetric(RawScorePerfMetric):
         for i in range(0, len_centers):
             in_bin = indices(delta_vqm, lambda x: low_limits[i] <= x < high_limits[i])
             if len(in_bin) == 0:
-                mean_cdf_z_vqm[i] = np.float('NaN')
+                mean_cdf_z_vqm[i] = float('NaN')
             else:
                 mean_cdf_z_vqm[i] = np.mean(cdf_z_vqm[in_bin])
         centers__mean_cdf_z_vqm = filter(lambda p: not np.isnan(p[1]), zip(centers, mean_cdf_z_vqm))

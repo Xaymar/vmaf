@@ -22,10 +22,13 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include "libvmaf/compute_vmaf.h"
 #include "libvmaf/model.h"
 #include "libvmaf/picture.h"
 #include "libvmaf/feature.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 enum VmafLogLevel {
     VMAF_LOG_LEVEL_NONE = 0,
@@ -52,11 +55,37 @@ enum VmafPoolingMethod {
     VMAF_POOL_METHOD_NB
 };
 
+/**
+ * @struct VmafConfiguration
+ * @brief  Configuration needed to initialize a `VmafContext`
+ *
+ * @param log_level   How verbose the logger is.
+ *
+ * @param n_threads   How many threads can be used to run
+ *                    feature extractors concurrently.
+ * 
+ * @param n_subsample Compute scores only every N frames.
+ *                    Note that setting an even value for N can lead to
+ *                    inaccurate results. For more detail, see
+ *                    https://github.com/Netflix/vmaf/issues/1214
+ * 
+ * @param cpumask     Restrict permitted CPU instruction sets.
+ *                    if cpumask & 1:  disable SSE2 / disable NEON (on arm64)
+ *                    if cpumask & 2:  disable SSE3/SSSE3
+ *                    if cpumask & 4:  disable SSE4.1
+ *                    if cpumask & 8:  disable AVX2
+ *                    if cpumask & 16: disable AVX512
+ *                    if cpumask & 32: disable AVX512ICL
+ * 
+ * @param gpumask     Restrict permitted GPU operations.
+ *                    if gpumask: disable CUDA
+ */
 typedef struct VmafConfiguration {
     enum VmafLogLevel log_level;
     unsigned n_threads;
     unsigned n_subsample;
     uint64_t cpumask;
+    uint64_t gpumask;
 } VmafConfiguration;
 
 typedef struct VmafContext VmafContext;
@@ -110,7 +139,9 @@ int vmaf_use_features_from_model_collection(VmafContext *vmaf,
  * Register specific feature extractor.
  * Useful when a specific/additional feature is required, usually one which
  * is not already provided by a model via `vmaf_use_features_from_model()`.
- * This may be called multiple times.
+ * This may be called multiple times. `VmafContext` will take ownership of the
+ * `VmafFeatureDictionary` (`opts_dict`). Use `vmaf_feature_dictionary_free()`
+ * only in the case of failure.
  *
  * @param vmaf         The VMAF context allocated with `vmaf_init()`.
  *
@@ -291,6 +322,47 @@ int vmaf_feature_score_pooled(VmafContext *vmaf, const char *feature_name,
                               unsigned index_low, unsigned index_high);
 
 /**
+ * Picture Pool Configuration
+ */
+typedef struct VmafPictureConfiguration {
+    struct {
+        unsigned w, h;
+        unsigned bpc;
+        enum VmafPixelFormat pix_fmt;
+    } pic_params;
+    unsigned pic_cnt;
+} VmafPictureConfiguration;
+
+/**
+ * Preallocate pictures for use with multi-threaded feature extraction.
+ * Pictures are allocated once and automatically returned to the pool when
+ * fully unref'd, avoiding repeated allocation/deallocation overhead.
+ *
+ * @param vmaf VMAF context allocated with `vmaf_init()`.
+ *
+ * @param cfg  Picture configuration including dimensions and pool size.
+ *
+ *
+ * @return 0 on success, or < 0 (a negative errno code) on error.
+ */
+int vmaf_preallocate_pictures(VmafContext *vmaf,
+                              VmafPictureConfiguration cfg);
+
+/**
+ * Fetch a preallocated picture from the picture pool.
+ * The picture must be returned to the pool via vmaf_picture_unref() when done.
+ * Pictures automatically return to the pool when their reference count reaches zero.
+ *
+ * @param vmaf VMAF context initialized with `vmaf_preallocate_pictures()`.
+ *
+ * @param pic  Output picture from the pool.
+ *
+ *
+ * @return 0 on success, or < 0 (a negative errno code) on error.
+ */
+int vmaf_fetch_preallocated_picture(VmafContext *vmaf, VmafPicture *pic);
+
+/**
  * Close a VMAF instance and free all associated memory.
  *
  * @param vmaf The VMAF instance to close.
@@ -320,5 +392,9 @@ int vmaf_write_output(VmafContext *vmaf, const char *output_path,
  * Get libvmaf version.
  */
 const char *vmaf_version(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* __VMAF_H__ */

@@ -1,4 +1,4 @@
-import collections
+from collections.abc import Hashable
 from functools import partial
 import os
 
@@ -14,7 +14,7 @@ import sys
 def deprecated(func):
     """
     Mark a function as deprecated.
-    It will result in a warning being emmitted when the function is used.
+    It will result in a warning being emitted when the function is used.
     """
 
     def new_func(*args, **kwargs):
@@ -70,7 +70,7 @@ class memoized(object):
         self.cache = {}
 
     def __call__(self, *args):
-        if not isinstance(args, collections.Hashable):
+        if not isinstance(args, Hashable):
             return self.func(*args)
         if args in self.cache:
             return self.cache[args]

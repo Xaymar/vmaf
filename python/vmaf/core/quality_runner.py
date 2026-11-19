@@ -1,11 +1,15 @@
 import os
 from abc import ABCMeta, abstractmethod, ABC
 import re
+from collections import defaultdict
 from xml.etree import ElementTree
 import copy
 
 import numpy as np
 
+from libsvm import svmutil
+
+import vmaf
 from vmaf.config import VmafConfig
 from vmaf import ExternalProgramCaller, convert_pixel_format_ffmpeg2vmafexec
 from vmaf.core.executor import Executor
@@ -14,16 +18,18 @@ from vmaf.core.result import Result
 from vmaf.core.feature_assembler import FeatureAssembler
 from vmaf.core.train_test_model import TrainTestModel, LibsvmNusvrTrainTestModel, \
     BootstrapLibsvmNusvrTrainTestModel
+from vmaf.core.cambi_feature_extractor import CambiFeatureExtractor, CambiFullReferenceFeatureExtractor
 from vmaf.core.feature_extractor import SsimFeatureExtractor, \
-    MsSsimFeatureExtractor, \
-    VmafFeatureExtractor, PsnrFeatureExtractor, VmafIntegerFeatureExtractor, \
-    FeatureExtractor
-from vmaf.core.noref_feature_extractor import BrisqueNorefFeatureExtractor
+    MsSsimFeatureExtractor, SpeedChromaFeatureExtractor, PsnrFeatureExtractor, VmafFeatureExtractor, \
+    VmafIntegerFeatureExtractor, \
+    FeatureExtractor, SpeedTemporalFeatureExtractor
 from vmaf.core.vmafexec_feature_extractor import CIEDE2000FeatureExtractor
 from vmaf.tools.decorator import override
 
 __copyright__ = "Copyright 2016-2020, Netflix, Inc."
 __license__ = "BSD+Patent"
+
+from vmaf.tools.misc import piecewise_linear_mapping
 
 
 class QualityRunner(Executor):
@@ -119,9 +125,10 @@ class QualityRunnerFromFeatureExtractor(QualityRunner):
             fifo_mode=self.fifo_mode,
             delete_workdir=self.delete_workdir,
             result_store=self.result_store,
-            optional_dict=None,
-            optional_dict2=None,
+            optional_dict=self.optional_dict,
+            optional_dict2=self.optional_dict2,
             parallelize=False,  # parallelization already in a higher level
+            save_workfiles=self.save_workfiles,
         )
         return feature_assembler
 
@@ -130,12 +137,17 @@ class QualityRunnerFromFeatureExtractor(QualityRunner):
         vmaf_fassembler = self._get_feature_assembler_instance(asset)
         vmaf_fassembler.run()
         feature_result = vmaf_fassembler.results[0]
+        result_dict = self._create_result_dict(feature_result)
+        return Result(asset, self.executor_id, result_dict)
+
+    def _create_result_dict(self, feature_result):
         result_dict = {}
         result_dict.update(feature_result.result_dict.copy())  # add feature result
         result_dict[self.get_scores_key()] = feature_result.result_dict[
             self._get_feature_extractor_class().get_scores_key(self._get_feature_key_for_score())]  # add score
-        del result_dict[self._get_feature_extractor_class().get_scores_key(self._get_feature_key_for_score())]  # delete redundant
-        return Result(asset, self.executor_id, result_dict)
+        del result_dict[
+            self._get_feature_extractor_class().get_scores_key(self._get_feature_key_for_score())]  # delete redundant
+        return result_dict
 
     @override(Executor)
     def _remove_result(self, asset):
@@ -197,6 +209,7 @@ class VmafLegacyQualityRunner(QualityRunner):
             optional_dict=None,
             optional_dict2=None,
             parallelize=False,  # parallelization already in a higher level
+            save_workfiles=self.save_workfiles,
         )
         return vmaf_fassembler
 
@@ -213,11 +226,6 @@ class VmafLegacyQualityRunner(QualityRunner):
         feature_result = vmaf_fassembler.results[0]
 
         # =====================================================================
-
-        try:
-            svmutil
-        except NameError:
-            from vmaf import svmutil
 
         # SVR predict
         model = svmutil.svm_load_model(self.SVM_MODEL_FILE)
@@ -359,9 +367,10 @@ class VmafQualityRunner(VmafQualityRunnerModelMixin, QualityRunner):
 
     # trained with resource/param/vmaf_v6.py on private/user/zli/resource/dataset/dataset/derived/vmafplusstudy_laptop_raw_generalandcornercase.py, MLER, y=x+17
     # modified from vmaf_float_v0.6.1.pkl to use integer features
-    DEFAULT_MODEL_FILEPATH = VmafConfig.model_path("vmaf_v0.6.1.json")
+    DEFAULT_MODEL_FILEPATH = vmaf.model_path("vmaf_v0.6.1.json")
 
-    DEFAULT_FEATURE_DICT = {'VMAF_feature': ['vif', 'adm', 'motion', 'ansnr']}  # for backward-compatible with older model only
+    DEFAULT_FEATURE_DICT = {
+        'VMAF_feature': ['vif', 'adm', 'motion', 'ansnr']}  # for backward-compatible with older model only
 
     def _get_quality_scores(self, asset):
         raise NotImplementedError
@@ -399,9 +408,10 @@ class VmafQualityRunner(VmafQualityRunnerModelMixin, QualityRunner):
             fifo_mode=self.fifo_mode,
             delete_workdir=self.delete_workdir,
             result_store=self.result_store,
-            optional_dict=None,
-            optional_dict2=None,
+            optional_dict=self.optional_dict,
+            optional_dict2=self.optional_dict2,
             parallelize=False,  # parallelization already in a higher level
+            save_workfiles=self.save_workfiles,
         )
         return vmaf_fassembler
 
@@ -439,8 +449,7 @@ class VmafQualityRunner(VmafQualityRunnerModelMixin, QualityRunner):
 
                     for opt in d_fname_fopts[atom_feature_full]:
                         if opt not in aggr_feature_opts_dict[aggr_feature]:
-                            aggr_feature_opts_dict[aggr_feature][opt] = \
-                            d_fname_fopts[atom_feature_full][opt]
+                            aggr_feature_opts_dict[aggr_feature][opt] = d_fname_fopts[atom_feature_full][opt]
                         else:
                             assert aggr_feature_opts_dict[aggr_feature][opt] == \
                                    d_fname_fopts[atom_feature_full][opt], \
@@ -460,24 +469,30 @@ class VmafQualityRunner(VmafQualityRunnerModelMixin, QualityRunner):
         vmaf_fassembler = self._get_vmaf_feature_assembler_instance(asset)
         vmaf_fassembler.run()
         feature_result = vmaf_fassembler.results[0]
+        result_dict = self._create_prediction_result_dict(asset, feature_result)
+        return Result(asset, self.executor_id, result_dict)
+
+    def _create_prediction_result_dict(self, asset, feature_result):
         model = self._load_model(asset)
         xs = model.get_per_unit_xs_from_a_result(feature_result)
-
         if self.optional_dict is not None and 'disable_clip_score' in self.optional_dict:
             disable_clip_score = self.optional_dict['disable_clip_score']
+            assert isinstance(disable_clip_score, bool)
         else:
-            disable_clip_score = False
-
+            disable_clip_score = None
         if self.optional_dict is not None and 'enable_transform_score' in self.optional_dict:
             enable_transform_score = self.optional_dict['enable_transform_score']
+            assert isinstance(enable_transform_score, bool)
         else:
-            enable_transform_score = False
-
-        pred_result = self.predict_with_model(model, xs,
-                                              disable_clip_score=disable_clip_score,
-                                              enable_transform_score=enable_transform_score)
+            enable_transform_score = None
+        more = dict()
+        if disable_clip_score is not None:
+            more['disable_clip_score'] = disable_clip_score
+        if enable_transform_score is not None:
+            more['enable_transform_score'] = enable_transform_score
+        pred_result = self.predict_with_model(model, xs, **more)
         result_dict = self._populate_result_dict(feature_result, pred_result)
-        return Result(asset, self.executor_id, result_dict)
+        return result_dict
 
     def _populate_result_dict(self, feature_result, pred_result):
         result_dict = {}
@@ -488,7 +503,7 @@ class VmafQualityRunner(VmafQualityRunnerModelMixin, QualityRunner):
     @classmethod
     def predict_with_model(cls, model, xs, **kwargs):
         ys_pred = model.predict(xs)['ys_label_pred']
-        do_transform_score = cls._do_transform_score(kwargs)
+        do_transform_score = cls._do_transform_score(model, kwargs)
         if do_transform_score:
             ys_pred = cls.transform_score(model, ys_pred)
         else:
@@ -500,8 +515,28 @@ class VmafQualityRunner(VmafQualityRunnerModelMixin, QualityRunner):
         return {'ys_pred': ys_pred}
 
     @staticmethod
-    def _do_transform_score(kwargs):
-        return 'enable_transform_score' in kwargs and kwargs['enable_transform_score'] is True
+    def _do_transform_score(model, kwargs):
+        model_flag = None
+        transform_dict = model.get_appended_info('score_transform')
+        if transform_dict is not None and 'enabled' in transform_dict:
+            assert isinstance(transform_dict['enabled'], bool)
+            model_flag = transform_dict['enabled']
+
+        kwargs_flag = None
+        if 'enable_transform_score' in kwargs:
+            assert isinstance(kwargs['enable_transform_score'], bool)
+            kwargs_flag = kwargs['enable_transform_score']
+
+        if model_flag is None and kwargs_flag is not None:
+            return kwargs_flag
+        elif model_flag is not None and kwargs_flag is None:
+            return model_flag
+        elif model_flag is None and kwargs_flag is None:
+            return False
+        else:
+            # as long as one is True, transform is enabled
+            # this is consistent behavior with VmafexecQualityRunner (libvmaf)
+            return model_flag or kwargs_flag
 
     @staticmethod
     def set_transform_score(model, score_transform):
@@ -512,27 +547,43 @@ class VmafQualityRunner(VmafQualityRunnerModelMixin, QualityRunner):
         model.append_info('score_clip', score_clip)
 
     @staticmethod
-    def transform_score(model, ys_pred):
+    def transform_score(model, y_in):
         """
-        Do post processing: transform final quality score e.g. via polynomial
-        {'p0': 1, 'p1': 1, 'p2': 0.5} means transform through 1 + x + 0.5 * x^2.
-        For now, only support polynomail up to 2nd-order.
+        Transform final quality score in the following optional steps (in this
+        order):
+        1) polynomial mapping. e.g. {'p0': 1, 'p1': 1, 'p2': 0.5} means
+        transform through 1 + x + 0.5 * x^2. For now, only support polynomail
+        up to 2nd-order.
+        2) piecewise-linear mapping, where the change points are defined in
+        'knots', in the form of [[x0, y0], [x1, y1], ...].
+        3) rectification, supporting 'out_lte_in' (output is less than or equal
+        to input) and 'out_gte_in' (output is greater than or equal to input).
         """
+
         transform_dict = model.get_appended_info('score_transform')
 
         if transform_dict is None:
-            return ys_pred
+            return y_in
 
-        y_in = ys_pred
-        y_out = np.zeros(ys_pred.shape)
+        # polynomial mapping
+        y_stage = np.copy(y_in)
+        if 'p0' in transform_dict or 'p1' in transform_dict or 'p2' in transform_dict:
+            y_out = np.zeros(y_stage.shape)
+            if 'p0' in transform_dict:
+                y_out += transform_dict['p0']
+            if 'p1' in transform_dict:
+                y_out += transform_dict['p1'] * y_stage
+            if 'p2' in transform_dict:
+                y_out += transform_dict['p2'] * y_stage * y_stage
+        else:
+            y_out = y_stage
 
-        # quadratic transform
-        if 'p0' in transform_dict:
-            y_out += transform_dict['p0']
-        if 'p1' in transform_dict:
-            y_out += transform_dict['p1'] * y_in
-        if 'p2' in transform_dict:
-            y_out += transform_dict['p2'] * y_in * y_in
+        # piecewise-linear mapping
+        y_stage = np.copy(y_out)
+        if 'knots' in transform_dict:
+            y_out = piecewise_linear_mapping(y_stage, transform_dict['knots'])
+        else:
+            y_out = y_stage
 
         # rectification
         if 'out_lte_in' in transform_dict and transform_dict['out_lte_in'] == 'true':
@@ -568,15 +619,22 @@ class VmafQualityRunner(VmafQualityRunnerModelMixin, QualityRunner):
         vmaf_fassembler.remove_results()
 
 
+class VmafnegQualityRunner(VmafQualityRunner):
+    TYPE = 'VMAFNEG'
+    DEFAULT_MODEL_FILEPATH = vmaf.model_path('vmaf_v0.6.1neg.json')
+
+
 class EnsembleVmafQualityRunner(VmafQualityRunner):
     TYPE = 'EnsembleVMAF'
 
     VERSION = '{}-Ensemble'.format(VmafQualityRunner.VERSION)
 
-    DEFAULT_MODEL_FILEPATH = [VmafConfig.model_path("vmaf_float_v0.6.1.pkl"), VmafConfig.model_path("vmaf_float_v0.6.1.pkl")]
+    DEFAULT_MODEL_FILEPATH = [VmafConfig.model_path("vmaf_float_v0.6.1.pkl"),
+                              VmafConfig.model_path("vmaf_float_v0.6.1.pkl")]
 
     # this now needs to become a list
-    DEFAULT_FEATURE_DICT = [{'VMAF_feature': ['vif', 'adm', 'motion', 'ansnr']}, {'VMAF_feature': ['vif', 'adm', 'motion', 'ansnr']}]
+    DEFAULT_FEATURE_DICT = [{'VMAF_feature': ['vif', 'adm', 'motion', 'ansnr']},
+                            {'VMAF_feature': ['vif', 'adm', 'motion', 'ansnr']}]
 
     def _populate_result_dict(self, feature_result, pred_result, result_dict):
         result_dict.update(feature_result.result_dict)  # add feature result
@@ -603,7 +661,7 @@ class EnsembleVmafQualityRunner(VmafQualityRunner):
                 fifo_mode=self.fifo_mode,
                 delete_workdir=self.delete_workdir,
                 result_store=self.result_store,
-                optional_dict=None,
+                optional_dict=None,  # WARNING: feature param not passed
                 optional_dict2=None,
                 parallelize=False,  # parallelization already in a higher level
             )
@@ -661,7 +719,8 @@ class EnsembleVmafQualityRunner(VmafQualityRunner):
         all_model_scores = np.zeros((Nmodels, Nframes))
         all_model_score_names = self.ensemblevmaf_get_scores_key(Nmodels)
         for model_ind in range(Nmodels):
-            result_dict[all_model_score_names[model_ind]] = pred_result_ensem_models[model_ind]['ys_pred']  # add quality score
+            result_dict[all_model_score_names[model_ind]] = pred_result_ensem_models[model_ind][
+                'ys_pred']  # add quality score
             all_model_scores[model_ind, :] = pred_result_ensem_models[model_ind]['ys_pred']
 
         # perform prediction averaging (simple average for now)
@@ -715,7 +774,8 @@ class VmafPhoneQualityRunner(VmafQualityRunner):
                 'Cannot specify enable_transform_score option in {cls}.'.format(cls=self.__class__.__name__)
 
     @staticmethod
-    def _do_transform_score(kwargs):
+    @override(VmafQualityRunner)
+    def _do_transform_score(model, kwargs):
         return True
 
 
@@ -727,12 +787,12 @@ class FeatureDiscoveryMixin(object):
         feature_found = False
         for feature_fullname in frame.attrib:
             if feature_ == feature_fullname:
-                feature_scores[i_feature].append(
+                feature_scores[i_feature][feature_origin].append(
                     float(frame.attrib[feature_fullname]))
                 if feature_nicknames[i_feature] is None:
-                    feature_nicknames[i_feature] = feature_origin
+                    feature_nicknames[i_feature] = [feature_origin]
                 else:
-                    assert feature_nicknames[i_feature] == feature_origin
+                    assert feature_nicknames[i_feature] == [feature_origin]
                 feature_found = True
                 break
         return feature_found
@@ -743,198 +803,15 @@ class FeatureDiscoveryMixin(object):
         feature_found = False
         for feature_fullname in frame.attrib:
             if feature_fullname.startswith(feature_prefix):
-                feature_scores[i_feature].append(
-                    float(frame.attrib[feature_fullname]))
                 feature_suffix = feature_fullname[len(feature_prefix):]
                 feature_nickname = feature_origin + '_' + feature_suffix
                 if feature_nicknames[i_feature] is None:
-                    feature_nicknames[i_feature] = feature_nickname
-                else:
-                    assert feature_nicknames[i_feature] == feature_nickname
+                    feature_nicknames[i_feature] = []
+                if feature_nickname not in feature_nicknames[i_feature]:
+                    feature_nicknames[i_feature].append(feature_nickname)
+                feature_scores[i_feature][feature_nickname].append(float(frame.attrib[feature_fullname]))
                 feature_found = True
-                break
         return feature_found
-
-
-class VmafossExecQualityRunner(QualityRunner, FeatureDiscoveryMixin):
-    TYPE = 'VMAFOSSEXEC'
-
-    # VERSION = '0.3'
-    # DEFAULT_MODEL_FILEPATH_DOTMODEL = VmafConfig.model_path("nflxall_vmafv3.pkl.model")
-
-    # VERSION = '0.3.1'
-    # DEFAULT_MODEL_FILEPATH_DOTMODEL = VmafConfig.model_path("nflxall_vmafv3a.pkl.model")
-
-    # VERSION = '0.3.2'
-    # ALGO_VERSION = 0
-    # # DEFAULT_MODEL_FILEPATH_DOTMODEL = VmafConfig.model_path("nflxall_vmafv4.pkl.model")
-    # DEFAULT_MODEL_FILEPATH = VmafConfig.model_path("nflxall_vmafv4.pkl")
-
-    VERSION = 'F' + VmafFeatureExtractor.VERSION + '-0.6.1'
-    ALGO_VERSION = 2
-
-    # trained with resource/param/vmaf_v6.py on private/user/zli/resource/dataset/dataset/derived/vmafplusstudy_laptop_raw_generalandcornercase.py, MLER, y=x+17
-    DEFAULT_MODEL_FILEPATH = VmafConfig.model_path("vmaf_v0.6.1.json")
-
-    FEATURES = ['adm2', 'adm_scale0', 'adm_scale1', 'adm_scale2', 'adm_scale3',
-                'motion', 'vif_scale0', 'vif_scale1', 'vif_scale2',
-                'vif_scale3', 'vif', 'psnr', 'ssim', 'ms_ssim', 'motion2',
-                'vmaf_bagging', 'vmaf_stddev', 'vmaf_ci_p95_lo', 'vmaf_ci_p95_hi']
-
-    @classmethod
-    def get_feature_scores_key(cls, atom_feature):
-        return "{type}_{atom_feature}_scores".format(
-            type=cls.TYPE, atom_feature=atom_feature)
-
-    def _generate_result(self, asset):
-        # routine to call the command-line executable and generate quality
-        # scores in the log file.
-
-        log_file_path = self._get_log_file_path(asset)
-
-        if self.optional_dict is not None \
-                and 'model_filepath' in self.optional_dict \
-                and self.optional_dict['model_filepath'] is not None:
-            model_filepath = self.optional_dict['model_filepath']
-        else:
-            model_filepath = self.DEFAULT_MODEL_FILEPATH
-
-        if self.optional_dict is not None and 'disable_clip_score' in self.optional_dict:
-            disable_clip_score = self.optional_dict['disable_clip_score']
-        else:
-            disable_clip_score = False
-
-        if self.optional_dict is not None and 'enable_transform_score' in self.optional_dict:
-            enable_transform_score = self.optional_dict['enable_transform_score']
-        else:
-            enable_transform_score = False
-
-        if self.optional_dict is not None and 'phone_model' in self.optional_dict:
-            phone_model = self.optional_dict['phone_model']
-        else:
-            phone_model = False
-
-        if self.optional_dict is not None and 'disable_avx' in self.optional_dict:
-            disable_avx = self.optional_dict['disable_avx']
-        else:
-            disable_avx = False
-
-        if self.optional_dict is not None and 'thread' in self.optional_dict:
-            n_thread = self.optional_dict['thread']
-        else:
-            n_thread = 0
-
-        if self.optional_dict is not None and 'subsample' in self.optional_dict:
-            n_subsample = self.optional_dict['subsample']
-        else:
-            n_subsample = 1
-
-        if self.optional_dict is not None and 'psnr' in self.optional_dict:
-            psnr = self.optional_dict['psnr']
-        else:
-            psnr = True
-        assert isinstance(psnr, bool)
-
-        if self.optional_dict is not None and 'ssim' in self.optional_dict:
-            ssim = self.optional_dict['ssim']
-        else:
-            ssim = True
-        assert isinstance(ssim, bool)
-
-        if self.optional_dict is not None and 'ms_ssim' in self.optional_dict:
-            ms_ssim = self.optional_dict['ms_ssim']
-        else:
-            ms_ssim = True
-        assert isinstance(ms_ssim, bool)
-
-        if self.optional_dict is not None and 'ci' in self.optional_dict:
-            ci = self.optional_dict['ci']
-        else:
-            ci = False
-
-        quality_width, quality_height = asset.quality_width_height
-
-        fmt = self._get_workfile_yuv_type(asset)
-        w = quality_width
-        h = quality_height
-        ref_path = asset.ref_procfile_path
-        dis_path = asset.dis_procfile_path
-        model = model_filepath
-        exe = self._get_exec()
-        logger = self.logger
-
-        ExternalProgramCaller.call_vmafossexec(fmt, w, h, ref_path, dis_path, model, log_file_path,
-                                               disable_clip_score, enable_transform_score,
-                                               phone_model, disable_avx, n_thread, n_subsample,
-                                               psnr, ssim, ms_ssim, ci, exe, logger)
-
-    def _get_exec(self):
-        return None  # signaling default
-
-    def _get_quality_scores(self, asset):
-        # routine to read the quality scores from the log file, and return
-        # the scores in a dictionary format.
-        log_file_path = self._get_log_file_path(asset)
-        tree = ElementTree.parse(log_file_path)
-        root = tree.getroot()
-        scores = []
-
-        augmented_features = copy.copy(self.FEATURES)
-
-        # check for per bootstrap model score
-        for feature in root.findall('frames/frame')[0].attrib.keys():
-            if re.match(r"vmaf_[0-9]+", feature):
-                augmented_features.append(feature)
-
-        feature_scores = [[] for _ in augmented_features]
-        feature_nicknames = [None for _ in augmented_features]
-
-        for frame in root.findall('frames/frame'):
-            scores.append(float(frame.attrib['vmaf']))
-            for i_feature, feature in enumerate(augmented_features):
-
-                # first look for exact match integer_xxx
-                feature_found = self._discover_feature_exact(
-                    frame, i_feature,
-                    'integer_' + feature, feature,
-                    feature_scores, feature_nicknames)
-
-                if feature_found:
-                    continue
-
-                # look for exact match xxx
-                feature_found = self._discover_feature_exact(
-                    frame, i_feature,
-                    feature, feature,
-                    feature_scores, feature_nicknames)
-
-                if feature_found:
-                    continue
-
-                # wildcard discovery: look for integer_xxx_*
-                feature_found = self._discover_feature_wildcard(
-                    frame, i_feature,
-                    'integer_' + feature + '_', feature,
-                    feature_scores, feature_nicknames)
-
-                if feature_found:
-                    continue
-
-                # wildcard discovery: look for xxx_*
-                feature_found = self._discover_feature_wildcard(
-                    frame, i_feature,
-                    feature + '_', feature,
-                    feature_scores, feature_nicknames)
-
-        assert len(scores) != 0
-        quality_result = {
-            self.get_scores_key(): scores,
-        }
-        for i_feature, feature in enumerate(augmented_features):
-            if len(feature_scores[i_feature]) != 0:
-                assert feature_nicknames[i_feature] is not None
-                quality_result[self.get_feature_scores_key(feature_nicknames[i_feature])] = feature_scores[i_feature]
-        return quality_result
 
 
 class SsimQualityRunner(QualityRunnerFromFeatureExtractor, ABC):
@@ -1002,9 +879,10 @@ class VmafSingleFeatureQualityRunner(QualityRunner):
             fifo_mode=self.fifo_mode,
             delete_workdir=self.delete_workdir,
             result_store=self.result_store,
-            optional_dict=None,
-            optional_dict2=None,
+            optional_dict=self.optional_dict,
+            optional_dict2=self.optional_dict2,
             parallelize=False,  # parallelization already in a higher level
+            save_workfiles=self.save_workfiles,
         )
         return vmaf_fassembler
 
@@ -1071,6 +949,12 @@ class MotionQualityRunner(VmafSingleFeatureQualityRunner):
     FEATURE_NAME = 'motion'
 
 
+class Motion2QualityRunner(VmafSingleFeatureQualityRunner):
+    TYPE = 'MOTION2'
+    # TYPE = 'TI'
+    FEATURE_NAME = 'motion2'
+
+
 class BootstrapVmafQualityRunner(VmafQualityRunner):
     TYPE = "BOOTSTRAP_VMAF"
     VERSION = VmafQualityRunner.VERSION + '-' + 'M' + BootstrapLibsvmNusvrTrainTestModel.VERSION
@@ -1083,11 +967,15 @@ class BootstrapVmafQualityRunner(VmafQualityRunner):
         result_dict = {}
         result_dict.update(feature_result.result_dict)  # add feature result
         self._populate_default_scores(pred_result, result_dict)
-        result_dict[self.get_all_models_scores_key()] = pred_result['ys_pred_all_models']  # add quality score from all models
+        result_dict[self.get_all_models_scores_key()] = pred_result[
+            'ys_pred_all_models']  # add quality score from all models
         result_dict[self.get_bagging_scores_key()] = pred_result['ys_pred_bagging']  # add bagging quality score
-        result_dict[self.get_stddev_scores_key()] = pred_result['ys_pred_stddev']  # add stddev of bootstrapped quality score
-        result_dict[self.get_ci95_low_scores_key()] = pred_result['ys_pred_ci95_low']  # add ci95 of bootstrapped quality score
-        result_dict[self.get_ci95_high_scores_key()] = pred_result['ys_pred_ci95_high']  # add ci95 of bootstrapped quality score
+        result_dict[self.get_stddev_scores_key()] = pred_result[
+            'ys_pred_stddev']  # add stddev of bootstrapped quality score
+        result_dict[self.get_ci95_low_scores_key()] = pred_result[
+            'ys_pred_ci95_low']  # add ci95 of bootstrapped quality score
+        result_dict[self.get_ci95_high_scores_key()] = pred_result[
+            'ys_pred_ci95_high']  # add ci95 of bootstrapped quality score
         return result_dict
 
     def _populate_default_scores(self, pred_result, result_dict):
@@ -1106,9 +994,10 @@ class BootstrapVmafQualityRunner(VmafQualityRunner):
         ys_pred_plus = ys_pred_bagging + DELTA
         ys_pred_minus = ys_pred_bagging - DELTA
 
-        do_transform_score = cls._do_transform_score(kwargs)
+        do_transform_score = cls._do_transform_score(model, kwargs)
         if do_transform_score:
-            ys_pred_all_models = np.array([cls.transform_score(model, ys_pred_some_model) for ys_pred_some_model in ys_pred_all_models])
+            ys_pred_all_models = np.array(
+                [cls.transform_score(model, ys_pred_some_model) for ys_pred_some_model in ys_pred_all_models])
             ys_pred = cls.transform_score(model, ys_pred)
             ys_pred_bagging = cls.transform_score(model, ys_pred_bagging)
             ys_pred_plus = cls.transform_score(model, ys_pred_plus)
@@ -1121,7 +1010,8 @@ class BootstrapVmafQualityRunner(VmafQualityRunner):
         if 'disable_clip_score' in kwargs and kwargs['disable_clip_score'] is True:
             pass
         else:
-            ys_pred_all_models = np.array([cls.clip_score(model, ys_pred_some_model) for ys_pred_some_model in ys_pred_all_models])
+            ys_pred_all_models = np.array(
+                [cls.clip_score(model, ys_pred_some_model) for ys_pred_some_model in ys_pred_all_models])
             ys_pred = cls.clip_score(model, ys_pred)
             ys_pred_bagging = cls.clip_score(model, ys_pred_bagging)
             ys_pred_plus = cls.clip_score(model, ys_pred_plus)
@@ -1240,6 +1130,7 @@ class NiqeQualityRunner(QualityRunner):
             optional_dict=feature_optional_dict,
             optional_dict2=None,
             parallelize=False,
+            save_workfiles=self.save_workfiles,
         )
 
         return vmaf_fassembler
@@ -1291,20 +1182,20 @@ class NiqeQualityRunner(QualityRunner):
 
 
 class VmafexecQualityRunner(QualityRunner, FeatureDiscoveryMixin):
-
     TYPE = 'VMAFEXEC'
 
     VERSION = 'F' + VmafFeatureExtractor.VERSION + '-0.6.1'
     ALGO_VERSION = 2
 
-    DEFAULT_MODEL_FILEPATH = VmafConfig.model_path("vmaf_v0.6.1.json")
+    DEFAULT_MODEL_FILEPATH = vmaf.model_path("vmaf_v0.6.1.json")
 
     FEATURES = [
-                'adm2', 'motion2', 'vif_scale0', 'vif_scale1', 'vif_scale2', 'vif_scale3',
-                'float_psnr', 'psnr_y', 'psnr_cb', 'psnr_cr',
-                'float_ssim', 'float_ms_ssim', 'ssim', 'ms_ssim',
-                'float_moment_ref1st', 'float_moment_dis1st', 'float_moment_ref2nd', 'float_moment_dis2nd',
-                ]
+        'adm2', 'adm3', 'motion2', 'motion3', 'vif_scale0', 'vif_scale1', 'vif_scale2', 'vif_scale3',
+        'adm_scale0', 'adm_scale1', 'adm_scale2', 'adm_scale3', 'motion', 'cambi', 'speed_chroma_uv',
+        'float_psnr', 'psnr_y', 'psnr_cb', 'psnr_cr',
+        'float_ssim', 'float_ms_ssim', 'ssim', 'ms_ssim',
+        'float_moment_ref1st', 'float_moment_dis1st', 'float_moment_ref2nd', 'float_moment_dis2nd',
+    ]
 
     @classmethod
     def get_feature_scores_key(cls, atom_feature):
@@ -1420,11 +1311,13 @@ class VmafexecQualityRunner(QualityRunner, FeatureDiscoveryMixin):
 
         vif_enhn_gain_limit = self.optional_dict['vif_enhn_gain_limit'] \
             if self.optional_dict is not None and 'vif_enhn_gain_limit' in self.optional_dict else None
-        assert vif_enhn_gain_limit is None or isinstance(vif_enhn_gain_limit, int) or isinstance(vif_enhn_gain_limit, float)
+        assert vif_enhn_gain_limit is None or isinstance(vif_enhn_gain_limit, int) or isinstance(vif_enhn_gain_limit,
+                                                                                                 float)
 
         adm_enhn_gain_limit = self.optional_dict['adm_enhn_gain_limit'] \
             if self.optional_dict is not None and 'adm_enhn_gain_limit' in self.optional_dict else None
-        assert adm_enhn_gain_limit is None or isinstance(adm_enhn_gain_limit, int) or isinstance(adm_enhn_gain_limit, float)
+        assert adm_enhn_gain_limit is None or isinstance(adm_enhn_gain_limit, int) or isinstance(adm_enhn_gain_limit,
+                                                                                                 float)
 
         assert (disable_enhn_gain is None) or \
                (disable_enhn_gain is not None and vif_enhn_gain_limit is None and adm_enhn_gain_limit is None)
@@ -1459,14 +1352,25 @@ class VmafexecQualityRunner(QualityRunner, FeatureDiscoveryMixin):
         width = quality_width
         height = quality_height
         pixel_format, bitdepth = convert_pixel_format_ffmpeg2vmafexec(fmt)
+        if asset.dis_encode_width_height is not None:
+            enc_width, enc_height = asset.dis_encode_width_height
+        else:
+            enc_width, enc_height = None, None
+        enc_bitdepth = asset.dis_encode_bitdepth
         output = log_file_path
         exe = self._get_exec()
         logger = self.logger
 
+        color_ref = self.optional_dict.get('color_ref') if self.optional_dict is not None else None
+        color_dist = self.optional_dict.get('color_dist') if self.optional_dict is not None else None
+
         ExternalProgramCaller.call_vmafexec(reference, distorted, width, height, pixel_format, bitdepth,
-                                          float_psnr, psnr, float_ssim, ssim, float_ms_ssim, ms_ssim, float_moment,
-                                          no_prediction, models, subsample, n_threads, disable_avx, output, exe, logger,
-                                          vif_enhn_gain_limit, adm_enhn_gain_limit, motion_force_zero)
+                                            float_psnr, psnr, float_ssim, ssim, float_ms_ssim, ms_ssim, float_moment,
+                                            no_prediction, models, subsample, n_threads, disable_avx, output, exe,
+                                            logger,
+                                            vif_enhn_gain_limit, adm_enhn_gain_limit, motion_force_zero,
+                                            enc_width, enc_height, enc_bitdepth,
+                                            color_ref, color_dist)
 
     def _get_exec(self):
         return None  # signaling default
@@ -1480,7 +1384,7 @@ class VmafexecQualityRunner(QualityRunner, FeatureDiscoveryMixin):
         root = tree.getroot()
         scores_dict = {}
 
-        feature_scores = [[] for _ in self.FEATURES]
+        feature_scores = [defaultdict(list) for _ in self.FEATURES]
         feature_nicknames = [None for _ in self.FEATURES]
 
         if self.optional_dict is not None and 'no_prediction' in self.optional_dict:
@@ -1557,10 +1461,65 @@ class VmafexecQualityRunner(QualityRunner, FeatureDiscoveryMixin):
         for i_feature, feature in enumerate(self.FEATURES):
             if len(feature_scores[i_feature]) != 0:
                 assert feature_nicknames[i_feature] is not None
-                quality_result[self.get_feature_scores_key(feature_nicknames[i_feature])] = feature_scores[i_feature]
+                for feature_nickname in feature_nicknames[i_feature]:
+                    quality_result[self.get_feature_scores_key(feature_nickname)] = feature_scores[i_feature][
+                        feature_nickname]
         return quality_result
 
 
 if __name__ == '__main__':
     import doctest
+
     doctest.testmod()
+
+
+class SpeedChromaQualityRunner(QualityRunnerFromFeatureExtractor, ABC):
+    TYPE = 'SpeedChroma'
+    VERSION = SpeedChromaFeatureExtractor.VERSION
+
+    @override(QualityRunnerFromFeatureExtractor)
+    def _get_feature_extractor_class(self):
+        return SpeedChromaFeatureExtractor
+
+    @override(QualityRunnerFromFeatureExtractor)
+    def _get_feature_key_for_score(self):
+        return 'speed_chroma_uv'
+
+
+class SpeedChromaUQualityRunner(QualityRunnerFromFeatureExtractor, ABC):
+    TYPE = 'SpeedChromaU'
+    VERSION = SpeedChromaFeatureExtractor.VERSION
+
+    @override(QualityRunnerFromFeatureExtractor)
+    def _get_feature_extractor_class(self):
+        return SpeedChromaFeatureExtractor
+
+    @override(QualityRunnerFromFeatureExtractor)
+    def _get_feature_key_for_score(self):
+        return 'speed_chroma_u'
+
+
+class SpeedChromaVQualityRunner(QualityRunnerFromFeatureExtractor, ABC):
+    TYPE = 'SpeedChromaV'
+    VERSION = SpeedChromaFeatureExtractor.VERSION
+
+    @override(QualityRunnerFromFeatureExtractor)
+    def _get_feature_extractor_class(self):
+        return SpeedChromaFeatureExtractor
+
+    @override(QualityRunnerFromFeatureExtractor)
+    def _get_feature_key_for_score(self):
+        return 'speed_chroma_v'
+
+
+class SpeedTemporalQualityRunner(QualityRunnerFromFeatureExtractor, ABC):
+    TYPE = 'SpeedTemporal'
+    VERSION = SpeedTemporalFeatureExtractor.VERSION
+
+    @override(QualityRunnerFromFeatureExtractor)
+    def _get_feature_extractor_class(self):
+        return SpeedTemporalFeatureExtractor
+
+    @override(QualityRunnerFromFeatureExtractor)
+    def _get_feature_key_for_score(self):
+        return 'speed_temporal'

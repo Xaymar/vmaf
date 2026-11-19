@@ -17,9 +17,8 @@ class NiqeTrainTestModel(TrainTestModel, RegressorMixin):
     @classmethod
     @override(TrainTestModel)
     def _assert_dimension(cls, feature_names, results):
-        # Allow input to be list
-        # For each result, the dimension of each result[feature_name]
-        # should be consistent
+        # Allow input to be a list
+        # For each result, the dimension of each result[feature_name] should be consistent
         assert isinstance(results[0][feature_names[0]], list)
         for result in results:
             len0 = len(result[feature_names[0]])
@@ -51,7 +50,7 @@ class NiqeTrainTestModel(TrainTestModel, RegressorMixin):
         self.model_type = self.TYPE
 
         assert 'label' in xys
-        ys_vec = xys['label'] # for NIQE, ys never used for training
+        ys_vec = xys['label']  # for NIQE, ys never used for training
 
         # this makes sure the order of features are normalized, and each
         # dimension of xys_2d is consistent with feature_names
@@ -64,9 +63,9 @@ class NiqeTrainTestModel(TrainTestModel, RegressorMixin):
 
         xs_2d = []
         for i_sample in range(num_samples):
-            xs_2d_ = np.vstack(map(
+            xs_2d_ = np.vstack(list(map(
                 lambda feature_name: xys[feature_name][i_sample], feature_names)
-            ).T
+            )).T
             xs_2d.append(xs_2d_)
         xs_2d = np.vstack(xs_2d)
 
@@ -99,7 +98,7 @@ class NiqeTrainTestModel(TrainTestModel, RegressorMixin):
             # no normalization for NIQE
 
             if xs_2d_.shape[0] < 2:
-                ys_label_pred_ = None # NIQE won't work for single patch
+                ys_label_pred_ = None  # NIQE won't work for single patch
             else:
                 ys_label_pred_ = self._predict(self.model, xs_2d_)
 

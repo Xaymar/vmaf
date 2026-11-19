@@ -1,6 +1,7 @@
 from collections import OrderedDict
 import json
 import re
+from typing import Optional, Callable
 
 import numpy as np
 
@@ -21,7 +22,7 @@ class BasicResult(object):
         self.result_dict = result_dict
         self.score_aggregate_method = np.mean
 
-    def set_score_aggregate_method(self, score_aggregate_method):
+    def set_score_aggregate_method(self, score_aggregate_method: Optional[Callable]):
         if score_aggregate_method is not None:
             self.score_aggregate_method = score_aggregate_method
         else:
@@ -139,8 +140,10 @@ class BasicResult(object):
         return str_aggregate
 
     @staticmethod
-    def scores_key_wildcard_match(result_dict, scores_key):
+    def scores_key_wildcard_match(result_dict, scores_key, excluded_scores_keys=None):
         """
+        Find all matching score keys from a result dictionary. When a list of keys is provided via excluded_scores_keys,
+        these particular keys will be ommited from the query result.
         >>> BasicResult.scores_key_wildcard_match({'VMAF_integer_feature_vif_scale0_egl_1_scores': [0.983708]}, 'VMAF_integer_feature_vif_scale0_scores')
         'VMAF_integer_feature_vif_scale0_egl_1_scores'
         >>> BasicResult.scores_key_wildcard_match({'VMAF_integer_feature_vif_scale0_egl_1_scores': [0.983708]}, 'VMAF_integer_feature_vif_scale1_scores')
@@ -207,10 +210,24 @@ class BasicResult(object):
                  'VMAF_feature_vif_scale0_egl_1_scores': [0.983738]}
         >>> BasicResult.scores_key_wildcard_match(e, 'VMAF_feature_adm_num_scores')
         'VMAF_feature_adm_num_egl_1_scores'
+        >>> f = {'VMAF_integer_feature_vif_scale0_egl_1_scores': [111.207703], \
+                 'VMAF_integer_feature_vif_scale0_eg_1_scores': [109.423508]}
+        >>> BasicResult.scores_key_wildcard_match(f, 'VMAF_integer_feature_vif_scale0_scores')
+        'VMAF_integer_feature_vif_scale0_eg_1_scores'
+        >>> BasicResult.scores_key_wildcard_match(f, 'VMAF_integer_feature_vif_scale0_scores', excluded_scores_keys=[])
+        'VMAF_integer_feature_vif_scale0_eg_1_scores'
+        >>> BasicResult.scores_key_wildcard_match(f, 'VMAF_integer_feature_vif_scale0_scores', excluded_scores_keys=['VMAF_integer_feature_vif_scale0_eg_1_scores'])
+        'VMAF_integer_feature_vif_scale0_egl_1_scores'
+        >>> BasicResult.scores_key_wildcard_match(f, 'VMAF_integer_feature_vif_scale0_scores', excluded_scores_keys=['VMAF_integer_feature_vif_scale0_eg_1_scores', 'VMAF_integer_feature_vif_scale0_egl_1_scores'])
+        Traceback (most recent call last):
+        ...
+        KeyError: 'no key matches VMAF_integer_feature_vif_scale0_scores'
         """
 
         # first look for exact match
-        result_keys_sorted = sorted(result_dict.keys())
+        result_keys_sorted = [key for key in sorted(result_dict.keys()) if (excluded_scores_keys is not None and
+                                                                            key not in excluded_scores_keys) or
+                              excluded_scores_keys is None]
         for result_key in result_keys_sorted:
             if result_key == scores_key:
                 return result_key
@@ -386,6 +403,8 @@ class Result(BasicResult):
 
         frames = top.find('frames')
 
+        pred_result_key = None
+
         for frame_ind, frame in enumerate(frames):
             for score_key, score_value in frame.attrib.items():
                 if 'score' in score_key:
@@ -410,6 +429,8 @@ class Result(BasicResult):
         result_dict = {}
 
         frames = json_data['frames']
+
+        pred_result_key = None
 
         for frame_ind, frame in enumerate(frames):
             for score_key, score_value in frame.items():
@@ -596,13 +617,13 @@ class Result(BasicResult):
         return df
 
     @classmethod
-    def from_dataframe(cls, df):
+    def from_dataframe(cls, df, AssetClass=Asset):
 
         # first, make sure the df conform to the format for a single asset
         cls._assert_asset_dataframe(df)
 
         asset_repr = df.iloc[0]['asset']
-        asset = Asset.from_repr(asset_repr)
+        asset = AssetClass.from_repr(asset_repr)
 
         executor_id = df.iloc[0]['executor_id']
 

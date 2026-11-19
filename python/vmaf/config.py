@@ -2,6 +2,7 @@ from __future__ import absolute_import
 
 import os
 import ssl
+import tempfile
 import urllib.request
 import urllib.error
 
@@ -19,7 +20,21 @@ def download_reactively(local_path, remote_path):
         print(f'download {local_path} from {remote_path}')
         try:
             ssl._create_default_https_context = ssl._create_unverified_context
-            urllib.request.urlretrieve(remote_path, local_path)
+            # Download to a sibling tempfile then atomically rename, so
+            # concurrent readers (e.g. pytest-xdist workers sharing the
+            # cache) cannot observe a partially-written local_path.
+            fd, tmp_path = tempfile.mkstemp(
+                dir=os.path.dirname(local_path),
+                prefix=os.path.basename(local_path) + '.',
+                suffix='.part',
+            )
+            os.close(fd)
+            try:
+                urllib.request.urlretrieve(remote_path, tmp_path)
+                os.replace(tmp_path, local_path)
+            finally:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
         except urllib.error.HTTPError as e:
             print(f"error downloading from {remote_path}")
             raise e
@@ -43,12 +58,25 @@ class VmafExternalConfig(object):
             path = getattr(externals, name, None)
             if path and os.path.exists(path):
                 return path
-
         except ImportError:
             print('ImportError')
-
             pass
 
+        return None
+
+    @staticmethod
+    def _attr_from_external(name):
+        """
+        :param str name: Name of external configuration to look up
+        :return str: Configured attribute (not path), if any
+        """
+        try:
+            from . import externals
+            attr = getattr(externals, name, None)
+            return attr
+        except ImportError:
+            print('ImportError')
+            pass
         return None
 
     @classmethod
@@ -57,6 +85,14 @@ class VmafExternalConfig(object):
         :return str: Path to ffmpeg, if installed and configured via `externals` module
         """
         return cls._path_from_external('FFMPEG_PATH')
+
+    @classmethod
+    def ffmpeg_env(cls):
+        """
+        :return dict: Dictionary of environmental variables when running ffmpeg, if installed and configured via
+        'externals` module
+        """
+        return cls._attr_from_external('FFMPEG_ENV')
 
     @classmethod
     def matlab_path(cls):
@@ -115,16 +151,9 @@ class VmafExternalConfig(object):
         return cls._path_from_external('VMAF_PATH')
 
     @classmethod
-    def vmafossexec_path(cls):
-        """
-        :return str: Path to external vmafossexec executable, if installed and configured via `externals` module
-        """
-        return cls._path_from_external('VMAFOSSEXEC_PATH')
-
-    @classmethod
     def vmafexec_path(cls):
         """
-        :return str: Path to external vmafossexec executable, if installed and configured via `externals` module
+        :return str: Path to external vmafexec executable, if installed and configured via `externals` module
         """
         return cls._path_from_external('VMAFEXEC_PATH')
 
@@ -210,11 +239,11 @@ class DisplayConfig(object):
     def show(**kwargs):
         from vmaf import plt
         if 'write_to_dir' in kwargs:
-            format = kwargs['format'] if 'format' in kwargs else 'png'
+            fmt = kwargs['format'] if 'format' in kwargs else 'png'
             filedir = kwargs['write_to_dir'] if kwargs['write_to_dir'] is not None else VmafConfig.workspace_path('output')
             os.makedirs(filedir, exist_ok=True)
             for fignum in plt.get_fignums():
                 fig = plt.figure(fignum)
-                fig.savefig(os.path.join(filedir, str(fignum) + '.' + format), format=format)
+                fig.savefig(os.path.join(filedir, str(fignum) + '.' + fmt), format=fmt)
         else:
             plt.show()

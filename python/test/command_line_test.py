@@ -1,16 +1,17 @@
 import os
+import tempfile
 import unittest
 import subprocess
 
 from vmaf.config import VmafConfig
-from vmaf.tools.misc import run_process
-from vmaf import ExternalProgram
+from vmaf.tools.misc import MyTestCase
+from vmaf import ExternalProgram, run_process
 
 __copyright__ = "Copyright 2016-2020, Netflix, Inc."
 __license__ = "BSD+Patent"
 
 
-class RunProcessTest(unittest.TestCase):
+class RunProcessTest(MyTestCase):
 
     def test_run_process(self):
         ret = run_process('echo hello', shell=True)
@@ -23,9 +24,10 @@ class RunProcessTest(unittest.TestCase):
         self.assertTrue('not found' in e.exception.args[0])
 
 
-class CommandLineTest(unittest.TestCase):
+class CommandLineTest(MyTestCase):
 
     def setUp(self):
+        super().setUp()
         self.dataset_filename = VmafConfig.test_resource_path('example_dataset.py')
         self.raw_dataset_filename = VmafConfig.test_resource_path('example_raw_dataset.py')
         self.out_model_filepath = VmafConfig.workdir_path('tmp.json')
@@ -39,6 +41,7 @@ class CommandLineTest(unittest.TestCase):
             os.remove(self.out_model_filepath + '.model')
         if os.path.exists(self.batch_filename):
             os.remove(self.batch_filename)
+        super().tearDown()
 
     def test_run_testing_vmaf(self):
         exe = VmafConfig.root_path('python', 'vmaf', 'script', 'run_testing.py')
@@ -161,121 +164,63 @@ class CommandLineTest(unittest.TestCase):
         self.assertEqual(ret, 0)
 
 
-class VmafossexecCommandLineTest(unittest.TestCase):
+class VmafexecCommandLineTest(MyTestCase):
 
     RC_SUCCESS = 0
-    RC_VMAF_EXCEPTION = 256 - 2
-    RC_RUNTIME_ERROR = 256 - 3
-    RC_LOGIC_ERROR = 256 - 4
-    RC_SEGMENTATION_FAULT = 139
-    RC_ARGUMENT_ISSUE = 1
-    RC_MORE_ARGUMENT_ISSUE = 256 - 1
-    RC_ENOMEM = 244
-    RC_EINVAL = 234
 
-    def test_run_vmafossexec(self):
-        exe = ExternalProgram.vmafossexec
-        cmd = "{exe} yuv420p 576 324 {ref} {dis} {model} --thread 1 --subsample 2".format(
-            exe=exe, ref=VmafConfig.test_resource_path("yuv", "src01_hrc00_576x324.yuv"),
-            dis=VmafConfig.test_resource_path("yuv", "src01_hrc01_576x324.yuv"), model=VmafConfig.model_path("other_models", "vmaf_v0.6.0.json"))
+    def setUp(self) -> None:
+        super().setUp()
+        self.output_file_path = tempfile.NamedTemporaryFile().name
+
+    def tearDown(self) -> None:
+        if os.path.exists(self.output_file_path):
+            os.remove(self.output_file_path)
+        super().tearDown()
+
+    def test_run_vmafexec(self):
+        exe = ExternalProgram.vmafexec
+        cmd = "{exe} --reference {ref} --distorted {dis} --width 576 --height 324 --pixel_format 420 --bitdepth 8 --xml --feature psnr " \
+              "--model path={model} --quiet --output {output}".format(
+            exe=exe,
+            ref=VmafConfig.test_resource_path("yuv", "src01_hrc00_576x324.yuv"),
+            dis=VmafConfig.test_resource_path("yuv", "src01_hrc01_576x324.yuv"),
+            model=VmafConfig.model_path("other_models", "vmaf_v0.6.0.json"),
+            output=self.output_file_path)
         ret = subprocess.call(cmd, shell=True)
         self.assertEqual(ret, self.RC_SUCCESS)
+        with open(self.output_file_path, 'rt') as fo:
+            fc = fo.read()
+            self.assertTrue('<metric name="psnr_y" min="29.640688" max="34.760779" mean="30.755064" harmonic_mean="30.727905" />' in fc)
 
-    def test_run_vmafossexec_nonexist_model_file(self):
-        exe = ExternalProgram.vmafossexec
-        cmd = "{exe} yuv420p 576 324 {ref} {dis} {model} > /dev/null 2>&1".format(
-            exe=exe, ref=VmafConfig.test_resource_path("yuv", "src01_hrc00_576x324.yuv"),
-            dis=VmafConfig.test_resource_path("yuv", "src01_hrc01_576x324.yuv"), model=VmafConfig.model_path("other_models", "vmaf_v0.6.0.json_XXX"))
+    def test_run_vmafexec_with_frame_skipping(self):
+        exe = ExternalProgram.vmafexec
+        cmd = "{exe} --reference {ref} --distorted {dis} --width 576 --height 324 --pixel_format 420 --bitdepth 8 --xml --feature psnr " \
+              "--model path={model} --quiet --output {output} --frame_skip_ref 2 --frame_skip_dist 2".format(
+            exe=exe,
+            ref=VmafConfig.test_resource_path("yuv", "src01_hrc00_576x324.yuv"),
+            dis=VmafConfig.test_resource_path("yuv", "src01_hrc01_576x324.yuv"),
+            model=VmafConfig.model_path("other_models", "vmaf_v0.6.0.json"),
+            output=self.output_file_path)
         ret = subprocess.call(cmd, shell=True)
-        self.assertEqual(ret, self.RC_EINVAL)
+        self.assertEqual(ret, self.RC_SUCCESS)
+        with open(self.output_file_path, 'rt') as fo:
+            fc = fo.read()
+            self.assertTrue('<metric name="psnr_y" min="29.640688" max="33.788213" mean="30.643458" harmonic_mean="30.626214" />' in fc)
 
-    def test_run_vmafossexec_wrong_model_fmt(self):
-        exe = ExternalProgram.vmafossexec
-        cmd = "{exe} yuv420p 576 324 {ref} {dis} {model} > /dev/null 2>&1".format(
-            exe=exe, ref=VmafConfig.test_resource_path("yuv", "src01_hrc00_576x324.yuv"),
-            dis=VmafConfig.test_resource_path("yuv", "src01_hrc01_576x324.yuv"), model=VmafConfig.model_path("other_models", "vmaf_v0.6.0.json.model"))
+    def test_run_vmafexec_with_frame_skipping_unequal(self):
+        exe = ExternalProgram.vmafexec
+        cmd = "{exe} --reference {ref} --distorted {dis} --width 576 --height 324 --pixel_format 420 --bitdepth 8 --xml --feature psnr " \
+              "--model path={model} --quiet --output {output} --frame_skip_ref 2 --frame_skip_dist 5".format(
+            exe=exe,
+            ref=VmafConfig.test_resource_path("yuv", "src01_hrc00_576x324.yuv"),
+            dis=VmafConfig.test_resource_path("yuv", "src01_hrc01_576x324.yuv"),
+            model=VmafConfig.model_path("other_models", "vmaf_v0.6.0.json"),
+            output=self.output_file_path)
         ret = subprocess.call(cmd, shell=True)
-        self.assertEqual(ret, self.RC_EINVAL)
-
-    def test_run_vmafossexec_nonexist_ref_file(self):
-        exe = ExternalProgram.vmafossexec
-        cmd = "{exe} yuv420p 576 324 {ref} {dis} {model} > /dev/null 2>&1".format(
-            exe=exe, ref=VmafConfig.resource_path("yuv", "src01_hrc00_576x324_XXX.yuv"),
-            dis=VmafConfig.test_resource_path("yuv", "src01_hrc01_576x324.yuv"), model=VmafConfig.model_path("other_models", "vmaf_v0.6.0.json"))
-        ret = subprocess.call(cmd, shell=True)
-        self.assertEqual(ret, self.RC_ARGUMENT_ISSUE)
-
-    def test_run_vmafossexec_nonexist_dis_file(self):
-        exe = ExternalProgram.vmafossexec
-        cmd = "{exe} yuv420p 576 324 {ref} {dis} {model} > /dev/null 2>&1".format(
-            exe=exe, ref=VmafConfig.test_resource_path("yuv", "src01_hrc00_576x324.yuv"),
-            dis=VmafConfig.resource_path("yuv", "src01_hrc01_576x324_XXX.yuv"), model=VmafConfig.model_path("other_models", "vmaf_v0.6.0.json"))
-        ret = subprocess.call(cmd, shell=True)
-        self.assertEqual(ret, self.RC_ARGUMENT_ISSUE)
-
-    def test_run_vmafossexec_unknown_yuv_fmt(self):
-        exe = ExternalProgram.vmafossexec
-        cmd = "{exe} yuv420p_XXX 576 324 {ref} {dis} {model} > /dev/null 2>&1".format(
-            exe=exe, ref=VmafConfig.test_resource_path("yuv", "src01_hrc00_576x324.yuv"),
-            dis=VmafConfig.test_resource_path("yuv", "src01_hrc01_576x324.yuv"), model=VmafConfig.model_path("other_models", "vmaf_v0.6.0.json"))
-        ret = subprocess.call(cmd, shell=True)
-        self.assertEqual(ret, self.RC_ARGUMENT_ISSUE)
-
-    def test_run_vmafossexec_odd_resolution(self):
-        exe = ExternalProgram.vmafossexec
-        cmd = "{exe} yuv420p 575 323 {ref} {dis} {model} > /dev/null 2>&1".format(
-            exe=exe, ref=VmafConfig.test_resource_path("yuv", "src01_hrc00_576x324.yuv"),
-            dis=VmafConfig.test_resource_path("yuv", "src01_hrc01_576x324.yuv"), model=VmafConfig.model_path("other_models", "vmaf_v0.6.0.json"))
-        ret = subprocess.call(cmd, shell=True)
-        self.assertEqual(ret, self.RC_ARGUMENT_ISSUE)
-
-    def test_run_vmafossexec_wrong_wh_format(self):
-        exe = ExternalProgram.vmafossexec
-        cmd = "{exe} yuv420p 576 abc {ref} {dis} {model} > /dev/null 2>&1".format(
-            exe=exe, ref=VmafConfig.test_resource_path("yuv", "src01_hrc00_576x324.yuv"),
-            dis=VmafConfig.test_resource_path("yuv", "src01_hrc01_576x324.yuv"), model=VmafConfig.model_path("other_models", "vmaf_v0.6.0.json"))
-        ret = subprocess.call(cmd, shell=True)
-        self.assertEqual(ret, self.RC_MORE_ARGUMENT_ISSUE)
-
-    def test_run_vmafossexec_wrong_width_value(self):
-        exe = ExternalProgram.vmafossexec
-        cmd = "{exe} yuv420p 0 324 {ref} {dis} {model} > /dev/null 2>&1".format(
-            exe=exe, ref=VmafConfig.test_resource_path("yuv", "src01_hrc00_576x324.yuv"),
-            dis=VmafConfig.test_resource_path("yuv", "src01_hrc01_576x324.yuv"), model=VmafConfig.model_path("other_models", "vmaf_v0.6.0.json"))
-        ret = subprocess.call(cmd, shell=True)
-        self.assertEqual(ret, self.RC_MORE_ARGUMENT_ISSUE)
-
-    def test_run_vmafossexec_unknown_log_fmt(self):
-        exe = ExternalProgram.vmafossexec
-        cmd = "{exe} yuv420p 576 324 {ref} {dis} {model} --log-fmt xml_XXX > /dev/null 2>&1".format(
-            exe=exe, ref=VmafConfig.test_resource_path("yuv", "src01_hrc00_576x324.yuv"),
-            dis=VmafConfig.test_resource_path("yuv", "src01_hrc01_576x324.yuv"), model=VmafConfig.model_path("other_models", "vmaf_v0.6.0.json"))
-        ret = subprocess.call(cmd, shell=True)
-        self.assertEqual(ret, self.RC_MORE_ARGUMENT_ISSUE)
-
-    def test_run_vmafossexec_unknown_pooling(self):
-        exe = ExternalProgram.vmafossexec
-        cmd = "{exe} yuv420p 576 324 {ref} {dis} {model} --pool mean_XXX > /dev/null 2>&1".format(
-            exe=exe, ref=VmafConfig.test_resource_path("yuv", "src01_hrc00_576x324.yuv"),
-            dis=VmafConfig.test_resource_path("yuv", "src01_hrc01_576x324.yuv"), model=VmafConfig.model_path("other_models", "vmaf_v0.6.0.json"))
-        ret = subprocess.call(cmd, shell=True)
-        self.assertEqual(ret, self.RC_MORE_ARGUMENT_ISSUE)
-
-    def test_run_vmafossexec_wrong_thread(self):
-        exe = ExternalProgram.vmafossexec
-        cmd = "{exe} yuv420p 576 324 {ref} {dis} {model} --thread -1 --subsample 2 > /dev/null 2>&1".format(
-            exe=exe, ref=VmafConfig.test_resource_path("yuv", "src01_hrc00_576x324.yuv"),
-            dis=VmafConfig.test_resource_path("yuv", "src01_hrc01_576x324.yuv"), model=VmafConfig.model_path("other_models", "vmaf_v0.6.0.json"))
-        ret = subprocess.call(cmd, shell=True)
-        self.assertEqual(ret, self.RC_MORE_ARGUMENT_ISSUE)
-
-    def test_run_vmafossexec_wrong_subsample(self):
-        exe = ExternalProgram.vmafossexec
-        cmd = "{exe} yuv420p 576 324 {ref} {dis} {model} --thread 0 --subsample 0 > /dev/null 2>&1".format(
-            exe=exe, ref=VmafConfig.test_resource_path("yuv", "src01_hrc00_576x324.yuv"),
-            dis=VmafConfig.test_resource_path("yuv", "src01_hrc01_576x324.yuv"), model=VmafConfig.model_path("other_models", "vmaf_v0.6.0.json"))
-        ret = subprocess.call(cmd, shell=True)
-        self.assertEqual(ret, self.RC_MORE_ARGUMENT_ISSUE)
+        self.assertEqual(ret, self.RC_SUCCESS)
+        with open(self.output_file_path, 'rt') as fo:
+            fc = fo.read()
+            self.assertTrue('<metric name="psnr_y" min="19.019327" max="21.084954" mean="20.269606" harmonic_mean="20.258113" />' in fc)
 
 
 if __name__ == '__main__':

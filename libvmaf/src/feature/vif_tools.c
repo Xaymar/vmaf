@@ -16,14 +16,19 @@
  *
  */
 
+#include <assert.h>
+#include <errno.h>
 #include <float.h>
 #include <math.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "config.h"
 #include "cpu.h"
+#include "log.h"
 #include "mem.h"
 #include "common/convolution.h"
 #include "vif_options.h"
@@ -82,70 +87,63 @@ static float log2f_approx(float x)
 
 #endif /* VIF_FAST_LOG2 */
 
-#if 1 //defined(_MSC_VER)
-const float vif_filter1d_table_s[4][17] = {
-    { 0.00745626912, 0.0142655009, 0.0250313189, 0.0402820669, 0.0594526194, 0.0804751068, 0.0999041125, 0.113746084, 0.118773937, 0.113746084, 0.0999041125, 0.0804751068, 0.0594526194, 0.0402820669, 0.0250313189, 0.0142655009, 0.00745626912 },
-    { 0.0189780835, 0.0558981746, 0.120920904, 0.192116052, 0.224173605, 0.192116052, 0.120920904, 0.0558981746, 0.0189780835 },
-    { 0.054488685, 0.244201347, 0.402619958, 0.244201347, 0.054488685 },
-    { 0.166378498, 0.667243004, 0.166378498 }
-};
-#else
-const float vif_filter1d_table_s[4][17] = {
-    { 0x1.e8a77p-8,  0x1.d373b2p-7, 0x1.9a1cf6p-6, 0x1.49fd9ep-5, 0x1.e7092ep-5, 0x1.49a044p-4, 0x1.99350ep-4, 0x1.d1e76ap-4, 0x1.e67f8p-4, 0x1.d1e76ap-4, 0x1.99350ep-4, 0x1.49a044p-4, 0x1.e7092ep-5, 0x1.49fd9ep-5, 0x1.9a1cf6p-6, 0x1.d373b2p-7, 0x1.e8a77p-8 },
-    { 0x1.36efdap-6, 0x1.c9eaf8p-5, 0x1.ef4ac2p-4, 0x1.897424p-3, 0x1.cb1b88p-3, 0x1.897424p-3, 0x1.ef4ac2p-4, 0x1.c9eaf8p-5, 0x1.36efdap-6 },
-    { 0x1.be5f0ep-5, 0x1.f41fd6p-3, 0x1.9c4868p-2, 0x1.f41fd6p-3, 0x1.be5f0ep-5 },
-    { 0x1.54be4p-3,  0x1.55a0ep-1,  0x1.54be4p-3 }
-};
-#endif
-
-const int vif_filter1d_width[4] = { 17, 9, 5, 3 };
-
-const float vif_filter2d_table_s[4][17*17] = {
-    {
-        5.55959459278305e-05, 0.000106367407656738, 0.000186640246416797, 0.000300353914609461, 0.000443294728908000, 0.000600044018801974, 0.000744911927278875, 0.000848121393654296, 0.000885609734747598, 0.000848121393654296, 0.000744911927278875, 0.000600044018801974, 0.000443294728908000, 0.000300353914609461, 0.000186640246416797, 0.000106367407656738, 5.55959459278305e-05,
-        0.000106367407656738, 0.000203504504200748, 0.000357084295346644, 0.000574643829570478, 0.000848121393654296, 0.00114801764219911,  0.00142518216598191,  0.00162264482626724,  0.00169436835921373,  0.00162264482626724,  0.00142518216598191,  0.00114801764219911,  0.000848121393654296, 0.000574643829570478, 0.000357084295346644, 0.000203504504200748, 0.000106367407656738,
-        0.000186640246416797, 0.000357084295346644, 0.000626566937591844, 0.00100831324477739,  0.00148817752909640,  0.00201439802239364,  0.00250073172325580,  0.00284721454525617,  0.00297306604580432,  0.00284721454525617,  0.00250073172325580,  0.00201439802239364,  0.00148817752909640,  0.00100831324477739,  0.000626566937591844, 0.000357084295346644, 0.000186640246416797,
-        0.000300353914609461, 0.000574643829570478, 0.00100831324477739,  0.00162264482626724,  0.00239487439113087,  0.00324170345476482,  0.00402434403558712,  0.00458192726820001,  0.00478445588448085,  0.00458192726820001,  0.00402434403558712,  0.00324170345476482,  0.00239487439113087,  0.00162264482626724,  0.00100831324477739,  0.000574643829570478, 0.000300353914609461,
-        0.000443294728908000, 0.000848121393654296, 0.00148817752909640,  0.00239487439113087,  0.00353461414133880,  0.00478445588448085,  0.00593956133585855,  0.00676250285891533,  0.00706141645279030,  0.00676250285891533,  0.00593956133585855,  0.00478445588448085,  0.00353461414133880,  0.00239487439113087,  0.00148817752909640,  0.000848121393654296, 0.000443294728908000,
-        0.000600044018801974, 0.00114801764219911,  0.00201439802239364,  0.00324170345476482,  0.00478445588448085,  0.00647624243982486,  0.00803979389213322,  0.00915372804594197,  0.00955833767120214,  0.00915372804594197,  0.00803979389213322,  0.00647624243982486,  0.00478445588448085,  0.00324170345476482,  0.00201439802239364,  0.00114801764219911,  0.000600044018801974,
-        0.000744911927278875, 0.00142518216598191,  0.00250073172325580,  0.00402434403558712,  0.00593956133585855,  0.00803979389213322,  0.00998083169809971,  0.0113637016399286,   0.0118659956822055,   0.0113637016399286,   0.00998083169809971,  0.00803979389213322,  0.00593956133585855,  0.00402434403558712,  0.00250073172325580,  0.00142518216598191,  0.000744911927278875,
-        0.000848121393654296, 0.00162264482626724,  0.00284721454525617,  0.00458192726820001,  0.00676250285891533,  0.00915372804594197,  0.0113637016399286,   0.0129381717743925,   0.0135100599501079,   0.0129381717743925,   0.0113637016399286,   0.00915372804594197,  0.00676250285891533,  0.00458192726820001,  0.00284721454525617,  0.00162264482626724,  0.000848121393654296,
-        0.000885609734747598, 0.00169436835921373,  0.00297306604580432,  0.00478445588448085,  0.00706141645279030,  0.00955833767120214,  0.0118659956822055,   0.0135100599501079,   0.0141072265106852,   0.0135100599501079,   0.0118659956822055,   0.00955833767120214,  0.00706141645279030,  0.00478445588448085,  0.00297306604580432,  0.00169436835921373,  0.000885609734747598,
-        0.000848121393654296, 0.00162264482626724,  0.00284721454525617,  0.00458192726820001,  0.00676250285891533,  0.00915372804594197,  0.0113637016399286,   0.0129381717743925,   0.0135100599501079,   0.0129381717743925,   0.0113637016399286,   0.00915372804594197,  0.00676250285891533,  0.00458192726820001,  0.00284721454525617,  0.00162264482626724,  0.000848121393654296,
-        0.000744911927278875, 0.00142518216598191,  0.00250073172325580,  0.00402434403558712,  0.00593956133585855,  0.00803979389213322,  0.00998083169809971,  0.0113637016399286,   0.0118659956822055,   0.0113637016399286,   0.00998083169809971,  0.00803979389213322,  0.00593956133585855,  0.00402434403558712,  0.00250073172325580,  0.00142518216598191,  0.000744911927278875,
-        0.000600044018801974, 0.00114801764219911,  0.00201439802239364,  0.00324170345476482,  0.00478445588448085,  0.00647624243982486,  0.00803979389213322,  0.00915372804594197,  0.00955833767120214,  0.00915372804594197,  0.00803979389213322,  0.00647624243982486,  0.00478445588448085,  0.00324170345476482,  0.00201439802239364,  0.00114801764219911,  0.000600044018801974,
-        0.000443294728908000, 0.000848121393654296, 0.00148817752909640,  0.00239487439113087,  0.00353461414133880,  0.00478445588448085,  0.00593956133585855,  0.00676250285891533,  0.00706141645279030,  0.00676250285891533,  0.00593956133585855,  0.00478445588448085,  0.00353461414133880,  0.00239487439113087,  0.00148817752909640,  0.000848121393654296, 0.000443294728908000,
-        0.000300353914609461, 0.000574643829570478, 0.00100831324477739,  0.00162264482626724,  0.00239487439113087,  0.00324170345476482,  0.00402434403558712,  0.00458192726820001,  0.00478445588448085,  0.00458192726820001,  0.00402434403558712,  0.00324170345476482,  0.00239487439113087,  0.00162264482626724,  0.00100831324477739,  0.000574643829570478, 0.000300353914609461,
-        0.000186640246416797, 0.000357084295346644, 0.000626566937591844, 0.00100831324477739,  0.00148817752909640,  0.00201439802239364,  0.00250073172325580,  0.00284721454525617,  0.00297306604580432,  0.00284721454525617,  0.00250073172325580,  0.00201439802239364,  0.00148817752909640,  0.00100831324477739,  0.000626566937591844, 0.000357084295346644, 0.000186640246416797,
-        0.000106367407656738, 0.000203504504200748, 0.000357084295346644, 0.000574643829570478, 0.000848121393654296, 0.00114801764219911,  0.00142518216598191,  0.00162264482626724,  0.00169436835921373,  0.00162264482626724,  0.00142518216598191,  0.00114801764219911,  0.000848121393654296, 0.000574643829570478, 0.000357084295346644, 0.000203504504200748, 0.000106367407656738,
-        5.55959459278305e-05, 0.000106367407656738, 0.000186640246416797, 0.000300353914609461, 0.000443294728908000, 0.000600044018801974, 0.000744911927278875, 0.000848121393654296, 0.000885609734747598, 0.000848121393654296, 0.000744911927278875, 0.000600044018801974, 0.000443294728908000, 0.000300353914609461, 0.000186640246416797, 0.000106367407656738, 5.55959459278305e-05
-    },
-    {
-        0.000360167651076071, 0.00106084022060085, 0.00229484704297441, 0.00364599445829020, 0.00425438469465621, 0.00364599445829020, 0.00229484704297441, 0.00106084022060085, 0.000360167651076071,
-        0.00106084022060085,  0.00312460591694495, 0.00675925790681296, 0.0107389365865762,  0.0125308932784936,  0.0107389365865762,  0.00675925790681296, 0.00312460591694495, 0.00106084022060085,
-        0.00229484704297441,  0.00675925790681296, 0.0146218654976766,  0.0232308470133570,  0.0271072710362468,  0.0232308470133570,  0.0146218654976766,  0.00675925790681296, 0.00229484704297441,
-        0.00364599445829020,  0.0107389365865762,  0.0232308470133570,  0.0369085772977295,  0.0430673409280585,  0.0369085772977295,  0.0232308470133570,  0.0107389365865762,  0.00364599445829020,
-        0.00425438469465621,  0.0125308932784936,  0.0271072710362468,  0.0430673409280585,  0.0502537889675776,  0.0430673409280585,  0.0271072710362468,  0.0125308932784936,  0.00425438469465621,
-        0.00364599445829020,  0.0107389365865762,  0.0232308470133570,  0.0369085772977295,  0.0430673409280585,  0.0369085772977295,  0.0232308470133570,  0.0107389365865762,  0.00364599445829020,
-        0.00229484704297441,  0.00675925790681296, 0.0146218654976766,  0.0232308470133570,  0.0271072710362468,  0.0232308470133570,  0.0146218654976766,  0.00675925790681296, 0.00229484704297441,
-        0.00106084022060085,  0.00312460591694495, 0.00675925790681296, 0.0107389365865762,  0.0125308932784936,  0.0107389365865762,  0.00675925790681296, 0.00312460591694495, 0.00106084022060085,
-        0.000360167651076071, 0.00106084022060085, 0.00229484704297441, 0.00364599445829020, 0.00425438469465621, 0.00364599445829020, 0.00229484704297441, 0.00106084022060085, 0.000360167651076071
-    },
-    {
-        0.00296901674395050, 0.0133062098910137, 0.0219382312797146, 0.0133062098910137, 0.00296901674395050,
-        0.0133062098910137,  0.0596342954361801, 0.0983203313488458, 0.0596342954361801, 0.0133062098910137,
-        0.0219382312797146,  0.0983203313488458, 0.162102821637127,  0.0983203313488458, 0.0219382312797146,
-        0.0133062098910137,  0.0596342954361801, 0.0983203313488458, 0.0596342954361801, 0.0133062098910137,
-        0.00296901674395050, 0.0133062098910137, 0.0219382312797146, 0.0133062098910137, 0.00296901674395050
-    },
-    {
-        0.0276818087794658, 0.111014893010991, 0.0276818087794658,
-        0.111014893010991,  0.445213192838173, 0.111014893010991,
-        0.0276818087794658, 0.111014893010991, 0.0276818087794658
+static int round_up_to_odd(float f) {
+    int ceiling = ceil(f);
+    if (ceiling % 2 == 0) {
+        return ceiling + 1;
     }
-};
+    else {
+        return ceiling;
+    }
+}
 
-const int vif_filter2d_width[4] = { 17, 9, 5, 3 };
+static float get_gaussian_pdf(float x, float mean, float stdev) {
+    float num = exp(-0.5 * (x - mean)/stdev * (x - mean)/stdev);
+    float den = 1 / (stdev * sqrt(2 * M_PI));
+    return num / den;
+}
+
+static void get_1d_gaussian_kernel(float *out, int size, float stdev) {
+    assert(size % 2 == 1);
+
+    float sum = 0;
+    int k = (size - 1) / 2;
+    for (int i = 0; i < size; i++) {
+        int curr = i - k;
+        out[i] = get_gaussian_pdf(curr, 0, stdev);
+        sum += out[i];
+    }
+    for (int i = 0; i < size; i++) {
+        out[i] /= sum;
+    }
+}
+
+bool vif_validate_kernelscale(float kernelscale) {
+    for (int i = 0; i < NUM_KERNELSCALES; i++) {
+        if (fabsf(kernelscale - valid_kernelscales[i]) < 1e-3) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int vif_get_filter_size(int scale, float kernelscale) {
+    assert(scale <= 4);
+
+    int n = (1 << (4 - scale)) + 1;
+    return MAX(round_up_to_odd(n * kernelscale), 3);
+}
+
+void vif_get_filter(float *out, int scale, float kernelscale) {
+    int window_size = vif_get_filter_size(scale, kernelscale);
+    get_1d_gaussian_kernel(out, window_size, window_size / 5.0f);
+}
+
+void speed_get_antialias_filter(float *out, int scale, float kernelscale) {
+    // sigma_trick logic replication: antialias filter always has the size of scale 1 filter
+    int window_size = vif_get_filter_size(1, kernelscale);
+    get_1d_gaussian_kernel(out, window_size, sqrt(scale) * window_size / 5.0f);
+}
 
 void vif_dec2_s(const float *src, float *dst, int src_w, int src_h, int src_stride, int dst_stride)
 {
@@ -158,6 +156,21 @@ void vif_dec2_s(const float *src, float *dst, int src_w, int src_h, int src_stri
     for (i = 0; i < src_h / 2; ++i) {
         for (j = 0; j < src_w / 2; ++j) {
             dst[i * dst_px_stride + j] = src[(i * 2) * src_px_stride + (j * 2)];
+        }
+    }
+}
+
+void vif_dec16_s(const float *src, float *dst, int src_w, int src_h, int src_stride, int dst_stride)
+{
+    int src_px_stride = src_stride / sizeof(float); // src_stride is in bytes
+    int dst_px_stride = dst_stride / sizeof(float);
+
+    int i, j;
+
+    // decimation by 16 in each direction
+    for (i = 0; i < src_h / 16; ++i) {
+        for (j = 0; j < src_w / 16; ++j) {
+            dst[i * dst_px_stride + j] = src[(i * 16) * src_px_stride + (j * 16)];
         }
     }
 }
@@ -182,45 +195,11 @@ float vif_sum_s(const float *x, int w, int h, int stride)
     return accum;
 }
 
-void vif_xx_yy_xy_s(const float *x, const float *y, float *xx, float *yy, float *xy, int w, int h, int xstride, int ystride, int xxstride, int yystride, int xystride)
+void vif_statistic_s(const float *mu1, const float *mu2, const float *xx_filt, const float *yy_filt, const float *xy_filt, float *num, float *den,
+	int w, int h, int mu1_stride, int mu2_stride, int xx_filt_stride, int yy_filt_stride, int xy_filt_stride,
+	double vif_enhn_gain_limit, double vif_sigma_nsq)
 {
-    int x_px_stride = xstride / sizeof(float);
-    int y_px_stride = ystride / sizeof(float);
-    int xx_px_stride = xxstride / sizeof(float);
-    int yy_px_stride = yystride / sizeof(float);
-    int xy_px_stride = xystride / sizeof(float);
-
-    int i, j;
-
-    // L1 is 32 - 64 KB
-    // L2 is 2-4 MB
-    // w, h = 1920 x 1080 at floating point is 8 MB
-    // not going to fit into L2
-
-    float xval, yval, xxval, yyval, xyval;
-
-    for (i = 0; i < h; ++i) {
-        for (j = 0; j < w; ++j) {
-            xval = x[i * x_px_stride + j];
-            yval = y[i * y_px_stride + j];
-
-            xxval = xval * xval;
-            yyval = yval * yval;
-            xyval = xval * yval;
-
-            xx[i * xx_px_stride + j] = xxval;
-            yy[i * yy_px_stride + j] = yyval;
-            xy[i * xy_px_stride + j] = xyval;
-        }
-    }
-}
-
-void vif_statistic_s(const float *mu1, const float *mu2, const float *mu1_mu2, const float *xx_filt, const float *yy_filt, const float *xy_filt, float *num, float *den,
-	int w, int h, int mu1_stride, int mu2_stride, int mu1_mu2_stride, int xx_filt_stride, int yy_filt_stride, int xy_filt_stride, int num_stride, int den_stride,
-	double vif_enhn_gain_limit)
-{
-	static const float sigma_nsq = 2;
-	static const float sigma_max_inv = 4.0 / (255.0*255.0);
+	const float sigma_max_inv = powf(vif_sigma_nsq, 2.0f) / (255.0*255.0);
 
 	int mu1_px_stride = mu1_stride / sizeof(float);
 	int mu2_px_stride = mu2_stride / sizeof(float);
@@ -262,12 +241,12 @@ void vif_statistic_s(const float *mu1, const float *mu2, const float *mu1_mu2, c
 
 			/* ==== vif_stat_mode = 'matching_c' ==== */
 
-            /* if (sigma1_sq < sigma_nsq) {
+            /* if (sigma1_sq < vif_sigma_nsq) {
                 num_val = 1.0 - sigma2_sq * sigma_max_inv;
                 den_val = 1.0;
             }
             else {
-                num_log_num = (sigma2_sq + sigma_nsq) * sigma1_sq;
+                num_log_num = (sigma2_sq + vif_sigma_nsq) * sigma1_sq;
                 if (sigma12 < 0)
                 {
                     num_val = 0.0;
@@ -277,7 +256,7 @@ void vif_statistic_s(const float *mu1, const float *mu2, const float *mu1_mu2, c
                     num_log_den = num_log_num - sigma12 * sigma12;
                     num_val = log2f(num_log_num / num_log_den);
                 }
-                den_val = log2f(1.0f + sigma1_sq / sigma_nsq);
+                den_val = log2f(1.0f + sigma1_sq / vif_sigma_nsq);
             } */
 
             /* ==== vif_stat_mode = 'matching_matlab' ==== */
@@ -307,14 +286,14 @@ void vif_statistic_s(const float *mu1, const float *mu2, const float *mu1_mu2, c
 
             g = MIN(g, vif_enhn_gain_limit_f);
 
-            num_val = log2f(1.0f + (g * g * sigma1_sq) / (sv_sq + sigma_nsq));
-            den_val = log2f(1.0f + (sigma1_sq) / (sigma_nsq));
+            num_val = log2f(1.0f + (g * g * sigma1_sq) / (sv_sq + vif_sigma_nsq));
+            den_val = log2f(1.0f + (sigma1_sq) / (vif_sigma_nsq));
 
             if (sigma12 < 0.0f) {
                 num_val = 0.0f;
             }
 
-            if (sigma1_sq < sigma_nsq) {
+            if (sigma1_sq < vif_sigma_nsq) {
                 num_val = 1.0f - sigma2_sq * sigma_max_inv;
                 den_val = 1.0f;
             }
@@ -342,9 +321,8 @@ void vif_filter1d_s(const float *f, const float *src, float *dst, float *tmpbuf,
 
 #if ARCH_X86
     const unsigned flags = vmaf_get_cpu_flags();
-    if (flags & VMAF_X86_CPU_FLAG_AVX2) {
-        convolution_f32_avx_s(f, fwidth, src, dst, tmpbuf, w, h,
-                              src_px_stride, dst_px_stride);
+    if ((flags & VMAF_X86_CPU_FLAG_AVX2) && fwidth <= MAX_FWIDTH_AVX_CONV) {
+        convolution_f32_avx_s(f, fwidth, src, dst, tmpbuf, w, h, src_px_stride, dst_px_stride);
         return;
     }
 #endif
@@ -365,7 +343,7 @@ void vif_filter1d_s(const float *f, const float *src, float *dst, float *tmpbuf,
                 fcoeff = f[fi];
 
                 ii = i - fwidth / 2 + fi;
-                ii = ii < 0 ? -ii : (ii >= h ? 2 * h - ii - 1 : ii);
+                ii = ii < 0 ? -ii : (ii >= h ? 2 * h - ii - 2 : ii);
 
                 imgcoeff = src[ii * src_px_stride + j];
 
@@ -383,7 +361,7 @@ void vif_filter1d_s(const float *f, const float *src, float *dst, float *tmpbuf,
                 fcoeff = f[fj];
 
                 jj = j - fwidth / 2 + fj;
-                jj = jj < 0 ? -jj : (jj >= w ? 2 * w - jj - 1 : jj);
+                jj = jj < 0 ? -jj : (jj >= w ? 2 * w - jj - 2 : jj);
 
                 imgcoeff = tmp[jj];
 
@@ -395,6 +373,56 @@ void vif_filter1d_s(const float *f, const float *src, float *dst, float *tmpbuf,
     }
 
     aligned_free(tmp);
+}
+
+/* src and dst must not overlap; tmp holds at least w floats. */
+void vif_filter1d_dec16_scalar_s(const float *f, const float *src, float *dst,
+                                 float *tmp, int w, int h, int src_stride,
+                                 int dst_stride, int fwidth)
+{
+    const int src_px_stride = src_stride / sizeof(float);
+    const int dst_px_stride = dst_stride / sizeof(float);
+
+    for (int i = 0; i < h / 16; i++) {
+        /* Vertical pass at retained rows. */
+        for (int j = 0; j < w; j++) {
+            float accum = 0;
+            for (int fi = 0; fi < fwidth; fi++) {
+                int ii = i * 16 - fwidth / 2 + fi;
+                ii = ii < 0 ? -ii : (ii >= h ? 2 * h - ii - 2 : ii);
+                accum += f[fi] * src[ii * src_px_stride + j];
+            }
+            tmp[j] = accum;
+        }
+
+        for (int j = 0; j < w / 16; j++) {
+            float accum = 0;
+            for (int fj = 0; fj < fwidth; fj++) {
+                int jj = j * 16 - fwidth / 2 + fj;
+                jj = jj < 0 ? -jj : (jj >= w ? 2 * w - jj - 2 : jj);
+                accum += f[fj] * tmp[jj];
+            }
+            dst[i * dst_px_stride + j] = accum;
+        }
+    }
+}
+
+void vif_filter1d_dec16_s(const float *f, const float *src, float *dst,
+                        float *tmp, int w, int h, int src_stride,
+                        int dst_stride, int fwidth)
+{
+#if ARCH_X86
+    const unsigned flags = vmaf_get_cpu_flags();
+    if ((flags & VMAF_X86_CPU_FLAG_AVX2) && fwidth <= MAX_FWIDTH_AVX_CONV) {
+        convolution_f32_avx_dec16_s(f, fwidth, src, dst, tmp, w, h,
+                                    src_stride / sizeof(float),
+                                    dst_stride / sizeof(float));
+        return;
+    }
+#endif
+
+    vif_filter1d_dec16_scalar_s(f, src, dst, tmp, w, h, src_stride, dst_stride,
+                                fwidth);
 }
 
 // Code optimized by adding intrinsic code for the functions,
@@ -410,9 +438,8 @@ void vif_filter1d_sq_s(const float *f, const float *src, float *dst, float *tmpb
 	
 #if ARCH_X86
     const unsigned flags = vmaf_get_cpu_flags();
-    if (flags & VMAF_X86_CPU_FLAG_AVX2) {
-        convolution_f32_avx_sq_s(f, fwidth, src, dst, tmpbuf, w, h,
-                                 src_px_stride, dst_px_stride);
+    if ((flags & VMAF_X86_CPU_FLAG_AVX2) && fwidth <= MAX_FWIDTH_AVX_CONV) {
+        convolution_f32_avx_sq_s(f, fwidth, src, dst, tmpbuf, w, h, src_px_stride, dst_px_stride);
         return;
     }
 #endif
@@ -433,7 +460,7 @@ void vif_filter1d_sq_s(const float *f, const float *src, float *dst, float *tmpb
 				fcoeff = f[fi];
 
 				ii = i - fwidth / 2 + fi;
-				ii = ii < 0 ? -ii : (ii >= h ? 2 * h - ii - 1 : ii);
+				ii = ii < 0 ? -ii : (ii >= h ? 2 * h - ii - 2 : ii);
 
 				imgcoeff = src[ii * src_px_stride + j];
 
@@ -451,7 +478,7 @@ void vif_filter1d_sq_s(const float *f, const float *src, float *dst, float *tmpb
 				fcoeff = f[fj];
 
 				jj = j - fwidth / 2 + fj;
-				jj = jj < 0 ? -jj : (jj >= w ? 2 * w - jj - 1 : jj);
+				jj = jj < 0 ? -jj : (jj >= w ? 2 * w - jj - 2 : jj);
 
 				imgcoeff = tmp[jj];
 
@@ -469,16 +496,15 @@ void vif_filter1d_xy_s(const float *f, const float *src1, const float *src2, flo
 {
 
 	int src1_px_stride = src1_stride / sizeof(float);
-	int src2_px_stride = src1_stride / sizeof(float);
+	int src2_px_stride = src2_stride / sizeof(float);
 	int dst_px_stride = dst_stride / sizeof(float);
 
 	/* if support avx */
 
 #if ARCH_X86
     const unsigned flags = vmaf_get_cpu_flags();
-    if (flags & VMAF_X86_CPU_FLAG_AVX2) {
-        convolution_f32_avx_xy_s(f, fwidth, src1, src2, dst, tmpbuf, w, h,
-                                 src1_px_stride, src2_px_stride, dst_px_stride);
+    if ((flags & VMAF_X86_CPU_FLAG_AVX2) && fwidth <= MAX_FWIDTH_AVX_CONV) {
+        convolution_f32_avx_xy_s(f, fwidth, src1, src2, dst, tmpbuf, w, h, src1_px_stride, src2_px_stride, dst_px_stride);
         return;
     }
 #endif
@@ -499,7 +525,7 @@ void vif_filter1d_xy_s(const float *f, const float *src1, const float *src2, flo
 				fcoeff = f[fi];
 
 				ii = i - fwidth / 2 + fi;
-				ii = ii < 0 ? -ii : (ii >= h ? 2 * h - ii - 1 : ii);
+				ii = ii < 0 ? -ii : (ii >= h ? 2 * h - ii - 2 : ii);
 
 				imgcoeff1 = src1[ii * src1_px_stride + j];
 				imgcoeff2 = src2[ii * src2_px_stride + j];
@@ -518,7 +544,7 @@ void vif_filter1d_xy_s(const float *f, const float *src1, const float *src2, flo
 				fcoeff = f[fj];
 
 				jj = j - fwidth / 2 + fj;
-				jj = jj < 0 ? -jj : (jj >= w ? 2 * w - jj - 1 : jj);
+				jj = jj < 0 ? -jj : (jj >= w ? 2 * w - jj - 2 : jj);
 
 				imgcoeff = tmp[jj];
 
@@ -532,39 +558,257 @@ void vif_filter1d_xy_s(const float *f, const float *src1, const float *src2, flo
 	aligned_free(tmp);
 }
 
-void vif_filter2d_s(const float *f, const float *src, float *dst, int w, int h, int src_stride, int dst_stride, int fwidth)
-{
-    int src_px_stride = src_stride / sizeof(float);
-    int dst_px_stride = dst_stride / sizeof(float);
+int vif_get_scaling_method(char *scaling_method_str, enum vif_scaling_method *scale_method) {
+    if (!strcmp(scaling_method_str, "nearest")) {
+        *scale_method = vif_scale_nearest;
+    } else if (!strcmp(scaling_method_str, "bilinear")) {
+        *scale_method = vif_scale_bilinear;
+    } else if (!strcmp(scaling_method_str, "bicubic")) {
+        *scale_method = vif_scale_bicubic;
+    } else if (!strcmp(scaling_method_str, "lanczos4")) {
+        *scale_method = vif_scale_lanczos4;
+    } else {
+        vmaf_log(VMAF_LOG_LEVEL_ERROR, "Invalid scale method %s. Supported scale methods: [nearest, bilinear, bicubic, lanczos4]\n", scaling_method_str);
+        return -EINVAL;
+    }
 
-    float fcoeff, imgcoeff;
-    int i, j, fi, fj, ii, jj;
+    return 0;
+}
 
-    for (i = 0; i < h; ++i) {
-        for (j = 0; j < w; ++j) {
-            float accum = 0;
+static float bicubic_kernel(float t) {
+    float a = -0.75;
+    if (t < 0) {
+        t = -t;
+    }
+    if (t < 1) {
+        return ((a + 2) * t - (a + 3)) * t * t + 1;
+    }
+    if (t < 2) {
+        return (((t - 5) * t + 8) * t - 4) * a;
+    }
+    return 0;
+}
 
-            for (fi = 0; fi < fwidth; ++fi) {
-                float accum_inner = 0;
+static float mirror(float i, float left, float right) {
+    return (i < left ? -i : i > right ? 2 * right - i : i);
+}
 
-                for (fj = 0; fj < fwidth; ++fj) {
-                    fcoeff = f[fi * fwidth + fj];
+static float bicubic_interpolation(const float *src, int width, int height, int src_stride, float x, float y) {
+    int x0 = floor(x);
+    int y0 = floor(y);
 
-                    ii = i - fwidth / 2 + fi;
-                    jj = j - fwidth / 2 + fj;
+    float dx = x - x0;
+    float dy = y - y0;
 
-                    ii = ii < 0 ? -ii : (ii >= h ? 2 * h - ii - 1 : ii);
-                    jj = jj < 0 ? -jj : (jj >= w ? 2 * w - jj - 1 : jj);
+    float weights_x[4];
+    float weights_y[4];
 
-                    imgcoeff = src[ii * src_px_stride + jj];
+    for (int i = -1; i <= 2; i++) {
+        weights_x[i + 1] = bicubic_kernel(i - dx);
+        weights_y[i + 1] = bicubic_kernel(i - dy);
+    }
 
-                    accum_inner += fcoeff * imgcoeff;
-                }
-
-                accum += accum_inner;
-            }
-
-            dst[i * dst_px_stride + j] = accum;
+    float interp_val = 0.0;
+    for (int j = -1; j <= 2; j++) {
+        for (int i = -1; i <= 2; i++) {
+            int x_index = mirror(x0 + i, 0, width - 1);
+            int y_index = mirror(y0 + j, 0, height - 1);
+            float weight = weights_x[i + 1] * weights_y[j + 1];
+            interp_val += src[y_index * src_stride + x_index] * weight;
         }
+    }
+
+    return interp_val;
+}
+
+static void vif_scale_frame_bicubic_s(const float *src, float *dst,
+                                      int src_w, int src_h, int src_stride,
+                                      int dst_w, int dst_h, int dst_stride) {
+    // if the input and output sizes are the same
+    if (src_w == dst_w && src_h == dst_h) {
+        memcpy(dst, src, dst_stride * dst_h * sizeof(float));
+        return;
+    }
+
+    float ratio_x = (float)src_w / dst_w;
+    float ratio_y = (float)src_h / dst_h;
+
+    for (int y = 0; y < dst_h; y++) {
+        float yy = (y + 0.5) * ratio_y - 0.5;
+        for (int x = 0; x < dst_w; x++) {
+            float xx = (x + 0.5) * ratio_x - 0.5;
+            dst[y * dst_stride + x] = bicubic_interpolation(src, src_w, src_h, src_stride, xx, yy);
+        }
+    }
+}
+
+static float lanczos4_kernel(float x, float a) {
+    if (x == 0.0) return 1.0;
+    if (x > -a && x < a) {
+        return a * sin(M_PI * x) * sin(M_PI * x / a) / (M_PI * M_PI * x * x);
+    }
+    return 0.0;
+}
+
+static float lanczos4_interpolation(const float *src, int width, int height, int src_stride, float x, float y) {
+    int a = 4;
+    int x0 = floor(x);
+    int y0 = floor(y);
+
+    float dx = x - x0;
+    float dy = y - y0;
+
+    float value = 0.0;
+    float weight_sum = 0.0;
+    
+    float weights_x[9];
+    float weights_y[9];
+    for (int i = -a; i <= a; i++) {
+        weights_x[i + a] = lanczos4_kernel(i - dx, (float)a);
+        weights_y[i + a] = lanczos4_kernel(i - dy, (float)a);
+    }
+
+    for (int iy = -a; iy <= a; iy++) {
+        for (int ix = -a; ix <= a; ix++) {
+            float weight = weights_x[ix + a] * weights_y[iy + a];
+            weight_sum += weight;
+
+            int x_index = mirror(x0 + ix, 0, width - 1);
+            int y_index = mirror(y0 + iy, 0, height - 1);
+            value += src[y_index * src_stride + x_index] * weight;
+        }
+    }
+    
+    return value / weight_sum;
+}
+
+static void vif_scale_frame_lanczos4_s(const float *src, float *dst,
+                                      int src_w, int src_h, int src_stride,
+                                      int dst_w, int dst_h, int dst_stride) {
+    // if the input and output sizes are the same
+    if (src_w == dst_w && src_h == dst_h) {
+        memcpy(dst, src, dst_stride * dst_h * sizeof(float));
+        return;
+    }
+
+    float ratio_x = (float)src_w / dst_w;
+    float ratio_y = (float)src_h / dst_h;
+
+    for (int y = 0; y < dst_h; y++) {
+        float yy = (y + 0.5) * ratio_y - 0.5;
+        for (int x = 0; x < dst_w; x++) {
+            float xx = (x + 0.5) * ratio_x - 0.5;
+            dst[y * dst_stride + x] = lanczos4_interpolation(src, src_w, src_h, src_stride, xx, yy);
+        }
+    }
+}
+
+// The source indices and fractional weight for bilinear sampling depend
+// only on the output column -- computing them once per column and reusing
+// them across all rows avoids redoing floor/ceil/mirror once per pixel.
+void vif_scale_frame_bilinear_precompute_columns_s(int src_w, int dst_w,
+                                                   int *x1a, int *x2a, float *dxa) {
+    float ratio_x = (float)src_w / dst_w;
+    for (int x = 0; x < dst_w; x++) {
+        float xx = (x + 0.5) * ratio_x - 0.5;
+        x1a[x] = mirror(floor(xx), 0, src_w - 1);
+        x2a[x] = mirror(ceil(xx), 0, src_w - 1);
+        dxa[x] = xx - x1a[x];
+    }
+}
+
+static void vif_scale_frame_bilinear_apply_s(const float *src, float *dst,
+                       int src_h, int src_stride,
+                       int dst_w, int dst_h, int dst_stride,
+                       const int *x1a, const int *x2a, const float *dxa) {
+    float ratio_y = (float)src_h / dst_h;
+    for (int y = 0; y < dst_h; y++) {
+        float yy = (y + 0.5) * ratio_y - 0.5;
+        int y1 = mirror(floor(yy), 0, src_h - 1);
+        int y2 = mirror(ceil(yy), 0, src_h - 1);
+        float dy = yy - y1;
+        const float *r1 = src + (size_t)y1 * src_stride;
+        const float *r2 = src + (size_t)y2 * src_stride;
+        float *drow = dst + (size_t)y * dst_stride;
+        for (int x = 0; x < dst_w; x++) {
+            int x1 = x1a[x], x2 = x2a[x];
+            float dx = dxa[x];
+            drow[x] = (1 - dy) * (1 - dx) * r1[x1] +
+                      (1 - dy) *      dx  * r1[x2] +
+                           dy  * (1 - dx) * r2[x1] +
+                           dy  *      dx  * r2[x2];
+        }
+    }
+}
+
+void vif_scale_frame_bilinear_precomputed_s(const float *src, float *dst,
+                       int src_w, int src_h, int src_stride,
+                       int dst_w, int dst_h, int dst_stride,
+                       const int *x1a, const int *x2a, const float *dxa) {
+    // if the input and output sizes are the same
+    if (src_w == dst_w && src_h == dst_h) {
+        memcpy(dst, src, dst_stride * dst_h * sizeof(float));
+        return;
+    }
+
+    vif_scale_frame_bilinear_apply_s(src, dst, src_h, src_stride,
+                                     dst_w, dst_h, dst_stride, x1a, x2a, dxa);
+}
+
+static void vif_scale_frame_bilinear_s(const float *src, float *dst,
+                       int src_w, int src_h, int src_stride,
+                       int dst_w, int dst_h, int dst_stride) {
+    // if the input and output sizes are the same
+    if (src_w == dst_w && src_h == dst_h) {
+        memcpy(dst, src, dst_stride * dst_h * sizeof(float));
+        return;
+    }
+
+    // Column tables live on the stack, so the common case has no allocation
+    // at all. VLAs aren't used here since MSVC has no C99 VLA support.
+    // Callers must ensure dst_w <= VIF_BILINEAR_MAX_WIDTH before reaching
+    // here (checked once at init time; see vif_tools.h).
+    assert(dst_w <= VIF_BILINEAR_MAX_WIDTH);
+    int x1a[VIF_BILINEAR_MAX_WIDTH];
+    int x2a[VIF_BILINEAR_MAX_WIDTH];
+    float dxa[VIF_BILINEAR_MAX_WIDTH];
+
+    vif_scale_frame_bilinear_precompute_columns_s(src_w, dst_w, x1a, x2a, dxa);
+    vif_scale_frame_bilinear_apply_s(src, dst, src_h, src_stride,
+                                     dst_w, dst_h, dst_stride, x1a, x2a, dxa);
+}
+
+static void vif_scale_frame_nearest_s(const float *src, float *dst,
+                       int src_w, int src_h, int src_stride, 
+                       int dst_w, int dst_h, int dst_stride) {
+    // if the input and output sizes are the same
+    if (src_w == dst_w && src_h == dst_h) {
+        memcpy(dst, src, dst_stride * dst_h * sizeof(float));
+        return;
+    }
+
+    float ratio_x = (float)src_w / dst_w;
+    float ratio_y = (float)src_h / dst_h;
+
+    for (int y = 0; y < dst_h; y++) {
+        for (int x = 0; x < dst_w; x++) {
+            int rounded_y = (int)(y * ratio_y);
+            int rounded_x = (int)(x * ratio_x);
+            dst[y * dst_stride + x] = src[rounded_y * src_stride + rounded_x];
+        }
+    }
+}
+
+void vif_scale_frame_s(enum vif_scaling_method scale_method, const float *src, float *dst,
+                       int src_w, int src_h, int src_stride, 
+                       int dst_w, int dst_h, int dst_stride) {
+    if (scale_method == vif_scale_nearest) {
+        vif_scale_frame_nearest_s(src, dst, src_w, src_h, src_stride, dst_w, dst_h, dst_stride);
+    } else if (scale_method == vif_scale_bilinear) {
+        vif_scale_frame_bilinear_s(src, dst, src_w, src_h, src_stride, dst_w, dst_h, dst_stride);
+    } else if (scale_method == vif_scale_bicubic) {
+        vif_scale_frame_bicubic_s(src, dst, src_w, src_h, src_stride, dst_w, dst_h, dst_stride);
+    } else if (scale_method == vif_scale_lanczos4) {
+        vif_scale_frame_lanczos4_s(src, dst, src_w, src_h, src_stride, dst_w, dst_h, dst_stride);
     }
 }

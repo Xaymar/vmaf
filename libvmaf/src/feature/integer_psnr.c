@@ -20,6 +20,7 @@
 #include <float.h>
 #include <math.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "feature_collector.h"
@@ -87,6 +88,9 @@ static int init(VmafFeatureExtractor *fex, enum VmafPixelFormat pix_fmt,
 {
     PsnrState *s = fex->priv;
     s->peak = s->reduced_hbd_peak ? 255 * 1 << (bpc - 8) : (1 << bpc) - 1;
+
+    if (pix_fmt == VMAF_PIX_FMT_YUV400P)
+        s->enable_chroma = false;
 
     for (unsigned i = 0; i < 3; i++) {
         if (s->min_sse != 0.0) {
@@ -169,7 +173,7 @@ static int psnr_hbd(VmafPicture *ref_pic, VmafPicture *dist_pic,
         uint64_t sse = 0;
         for (unsigned i = 0; i < ref_pic->h[p]; i++) {
             for (unsigned j = 0; j < ref_pic->w[p]; j++) {
-                const int32_t e = ref[j] - dis[j];
+                const uint32_t e = abs(ref[j] - dis[j]);
                 sse += e * e;
             }
             ref += ref_pic->stride[p] / 2;

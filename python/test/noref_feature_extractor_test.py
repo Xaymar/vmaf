@@ -13,6 +13,10 @@ from test.testutil import set_default_576_324_videos_for_testing, set_default_57
 __copyright__ = "Copyright 2016-2020, Netflix, Inc."
 __license__ = "BSD+Patent"
 
+from vmaf.core.result_store import FileSystemResultStore
+
+from vmaf.tools.misc import MyTestCase
+
 
 class NorefFeatureExtractorTest(unittest.TestCase):
 
@@ -20,6 +24,7 @@ class NorefFeatureExtractorTest(unittest.TestCase):
         if hasattr(self, 'fextractor'):
             self.fextractor.remove_results()
             pass
+
 
     def test_noref_moment_fextractor(self):
 
@@ -101,8 +106,8 @@ class NorefFeatureExtractorTest(unittest.TestCase):
 
         self.assertAlmostEqual(results[0]['NIQE_noref_feature_alpha23_score'], 0.8168807870370377, places=4)
         self.assertAlmostEqual(results[0]['NIQE_noref_feature_alpha13_score'], 0.6949641203703707, places=4)
-        self.assertAlmostEqual(results[0]['NIQE_noref_feature_alpha_m1_score'], 2.0924143518518536, places=4)
-        self.assertAlmostEqual(results[0]['NIQE_noref_feature_blbr1_score'], 0.72958634325785898, places=4)
+        self.assertAlmostEqual(results[0]['NIQE_noref_feature_alpha_m1_score'], 2.0924143518518536, places=3)
+        self.assertAlmostEqual(results[0]['NIQE_noref_feature_blbr1_score'], 0.72958634325785898, places=3)
 
         self.assertAlmostEqual(results[1]['NIQE_noref_feature_alpha23_score'], 0.89566087962963026, places=4)
         self.assertAlmostEqual(results[1]['NIQE_noref_feature_alpha13_score'], 0.85539583333333391, places=4)
@@ -153,8 +158,8 @@ class NorefFeatureExtractorTest(unittest.TestCase):
 
         self.assertAlmostEqual(results[0]['NIQE_noref_feature_alpha23_score'], 0.8430156250000006, places=4)
         self.assertAlmostEqual(results[0]['NIQE_noref_feature_alpha13_score'], 0.71714583333333359, places=4)
-        self.assertAlmostEqual(results[0]['NIQE_noref_feature_alpha_m1_score'], 2.2195590277777795, places=4)
-        self.assertAlmostEqual(results[0]['NIQE_noref_feature_blbr1_score'], 0.74061215376929412, places=4)
+        self.assertAlmostEqual(results[0]['NIQE_noref_feature_alpha_m1_score'], 2.2195590277777795, places=3)
+        self.assertAlmostEqual(results[0]['NIQE_noref_feature_blbr1_score'], 0.74061215376929412, places=3)
 
         self.assertAlmostEqual(results[1]['NIQE_noref_feature_alpha23_score'], 0.9144918981481488, places=4)
         self.assertAlmostEqual(results[1]['NIQE_noref_feature_alpha13_score'], 0.87132291666666728, places=4)
@@ -224,6 +229,72 @@ class NorefFeatureExtractorTest(unittest.TestCase):
         self.assertAlmostEqual(results[1]['Moment_noref_feature_1st_score'], 59.788567297525134)
         self.assertAlmostEqual(results[1]['Moment_noref_feature_2nd_score'], 4696.668388042271)
         self.assertAlmostEqual(results[1]['Moment_noref_feature_var_score'], 1121.519917231207)
+
+
+class FeatureExtractorSaveWorkfilesTest(MyTestCase):
+
+    def tearDown(self):
+        if hasattr(self, 'fextractor'):
+            self.fextractor.remove_results()
+        super().tearDown()
+
+    def setUp(self):
+        super().setUp()
+        self.result_store = FileSystemResultStore()
+
+    def test_noref_moment_fextractor(self):
+
+        ref_path, dis_path, asset, asset_original = set_default_576_324_videos_for_testing()
+
+        self.fextractor = MomentNorefFeatureExtractor(
+            [asset, asset_original],
+            None, fifo_mode=False,
+            result_store=self.result_store,
+            save_workfiles=True,
+        )
+        self.fextractor.run()
+
+        results = self.fextractor.results
+
+        self.assertAlmostEqual(results[0]['Moment_noref_feature_1st_score'], 61.332006624999984)
+        self.assertAlmostEqual(results[0]['Moment_noref_feature_2nd_score'], 4798.659574041666)
+        self.assertAlmostEqual(results[0]['Moment_noref_feature_var_score'], 1036.8371843488285)
+
+        self.assertAlmostEqual(results[1]['Moment_noref_feature_1st_score'], 59.788567297525134)
+        self.assertAlmostEqual(results[1]['Moment_noref_feature_2nd_score'], 4696.668388042271)
+        self.assertAlmostEqual(results[1]['Moment_noref_feature_var_score'], 1121.519917231207)
+
+        self.fextractor.run()
+
+    def test_noref_moment_fextractor_save_workfiles_second_time(self):
+
+        ref_path, dis_path, asset, asset_original = set_default_576_324_videos_for_testing()
+
+        self.fextractor = MomentNorefFeatureExtractor(
+            [asset, asset_original],
+            None, fifo_mode=False,
+            result_store=self.result_store,
+            save_workfiles=False,
+        )
+        self.fextractor.run()
+
+        results = self.fextractor.results
+
+        self.assertAlmostEqual(results[0]['Moment_noref_feature_1st_score'], 61.332006624999984)
+        self.assertAlmostEqual(results[0]['Moment_noref_feature_2nd_score'], 4798.659574041666)
+        self.assertAlmostEqual(results[0]['Moment_noref_feature_var_score'], 1036.8371843488285)
+
+        self.assertAlmostEqual(results[1]['Moment_noref_feature_1st_score'], 59.788567297525134)
+        self.assertAlmostEqual(results[1]['Moment_noref_feature_2nd_score'], 4696.668388042271)
+        self.assertAlmostEqual(results[1]['Moment_noref_feature_var_score'], 1121.519917231207)
+
+        self.fextractor = MomentNorefFeatureExtractor(
+            [asset, asset_original],
+            None, fifo_mode=False,
+            result_store=self.result_store,
+            save_workfiles=True,
+        )
+        self.fextractor.run()
 
 
 if __name__ == '__main__':

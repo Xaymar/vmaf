@@ -21,11 +21,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef HAVE_MALLOC_H
+#include <malloc.h>
+#endif
+#ifdef HAVE_ALLOCA_H
+#include <alloca.h>
+#endif
 
 #include "dict.h"
 #include "feature/alias.h"
 #include "feature/feature_collector.h"
+#include "feature/feature_extractor.h"
 #include "feature/feature_name.h"
+#include "log.h"
 #include "model.h"
 #include "predict.h"
 #include "svm.h"
@@ -38,6 +46,22 @@ static int normalize(const VmafModel *model, double slope, double intercept,
         break;
     case(VMAF_MODEL_NORMALIZATION_TYPE_LINEAR_RESCALE):
         *feature_score = slope * (*feature_score) + intercept;
+        break;
+    default:
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
+static int denormalize_feature(const VmafModel *model, double slope,
+                                double intercept, double *feature_score)
+{
+    switch (model->norm_type) {
+    case(VMAF_MODEL_NORMALIZATION_TYPE_NONE):
+        break;
+    case(VMAF_MODEL_NORMALIZATION_TYPE_LINEAR_RESCALE):
+        *feature_score = (*feature_score - intercept) / slope;
         break;
     default:
         return -EINVAL;
@@ -61,8 +85,102 @@ static int denormalize(const VmafModel *model, double *prediction)
     return 0;
 }
 
+static int find_linear_function_parameters(VmafPoint p1, VmafPoint p2, double *alpha, double *beta) {
 
-static int transform(const VmafModel *model, double *prediction,
+    if (!(p1.x <= p2.x && p1.y <= p2.y))
+        return -EINVAL;  // first_point coordinates need to be smaller or equal to second_point coordinates
+
+    if (p2.x - p1.x == 0 || p2.y - p1.y == 0) {
+        if (!(p1.x == p2.x && p1.y == p2.y))
+            return -EINVAL;  // first_point and second_point cannot lie on a horizontal or vertical line
+        *alpha = 1.0;  // both points are the same
+        *beta = 0.0;
+    }
+    else if (p1.x == 0) {
+        *beta = p1.y;
+        *alpha = (p2.y - *beta) / p2.x;
+    }
+    else {
+        *alpha = (p2.y - p1.y) / (p2.x - p1.x);
+        *beta = p1.y - (p1.x * (*alpha));
+    }
+
+    return 0;
+}
+
+static int piecewise_linear_mapping(double x, VmafPoint *knots, unsigned n_knots, double *y) {
+
+    // initialize them to prevent uninitialized variable warnings
+    double slope = 0.0, offset = 0.0;
+
+    if (n_knots <= 1)
+        return EINVAL;
+    unsigned n_seg = n_knots - 1;
+
+    *y = 0.0;
+
+    // construct the function
+    for (unsigned idx = 0; idx < n_seg; idx++) {
+        if (!(knots[idx].x <  knots[idx + 1].x &&
+              knots[idx].y <= knots[idx + 1].y))
+            return EINVAL;
+
+        bool cond0 = knots[idx].x <= x;
+        bool cond1 = x <= knots[idx + 1].x;
+
+        if (knots[idx].y == knots[idx + 1].y) {  // the segment is horizontal
+            if (cond0 && cond1) {
+                *y = knots[idx].y;
+            }
+
+            if (idx == 0) {
+                // for points below the defined range
+                if (x < knots[idx].x)
+                    *y = knots[idx].y;
+            }
+
+            if (idx == n_seg - 1) {
+                // for points above the defined range
+                if (x > knots[idx + 1].x)
+                    *y = knots[idx].y;
+            }
+        } else {
+            find_linear_function_parameters(knots[idx], knots[idx + 1],
+                                            &slope, &offset);
+
+            if (cond0 && cond1){
+                *y = slope * x + offset;
+            }
+
+            if (idx == 0) {
+                // for points below the defined range
+                if (x < knots[idx].x)
+                    *y = slope * x + offset;
+            }
+
+            if (idx == n_seg - 1) {
+                // for points above the defined range
+                if (x > knots[idx + 1].x)
+                    *y = slope * x + offset;
+            }
+        }
+    }
+
+    return 0;
+}
+
+/*  Reproducing the logic in quality_runner.VmafQualityRunner.transform_score().
+    Transform final quality score in the following optional steps (in this
+    order):
+    1) polynomial mapping. e.g. {'p0': 1, 'p1': 1, 'p2': 0.5} means
+    transform through 1 + x + 0.5 * x^2. For now, only support polynomail
+    up to 2nd-order.
+    2) piecewise-linear mapping, where the change points are defined in
+    'knots', in the form of [[x0, y0], [x1, y1], ...].
+    3) rectification, supporting 'out_lte_in' (output is less than or equal
+    to input) and 'out_gte_in' (output is greater than or equal to input).
+ */
+static int transform(const VmafModel *model, double *y_in,
                      enum VmafModelFlags flags)
 {
     if (!model->score_transform.enabled)
@@ -70,21 +188,45 @@ static int transform(const VmafModel *model, double *prediction,
     if (flags & VMAF_MODEL_FLAG_DISABLE_TRANSFORM)
         return 0;
 
-    double value = 0.;
-    double p = *prediction;
+    double y_stage, y_out;
 
-    if (model->score_transform.p0.enabled)
-        value += model->score_transform.p0.value;
-    if (model->score_transform.p1.enabled)
-        value += model->score_transform.p1.value * p;
-    if (model->score_transform.p2.enabled)
-        value += model->score_transform.p2.value * p * p;
+    // polynomial mapping
+    y_stage = *y_in;
+    if (model->score_transform.p0.enabled ||
+        model->score_transform.p1.enabled ||
+        model->score_transform.p2.enabled)
+    {
+        y_out = 0.;
+        if (model->score_transform.p0.enabled)
+            y_out += model->score_transform.p0.value;
+        if (model->score_transform.p1.enabled)
+            y_out += model->score_transform.p1.value * y_stage;
+        if (model->score_transform.p2.enabled)
+            y_out += model->score_transform.p2.value * y_stage * y_stage;
+    }
+    else {
+        y_out = y_stage;
+    }
+
+    // piecewise-linear mapping
+    y_stage = y_out;
+    if (model->score_transform.knots.enabled) {
+        piecewise_linear_mapping(y_stage,
+                                 model->score_transform.knots.list,
+                                 model->score_transform.knots.n_knots,
+                                 &y_out);
+    }
+    else {
+        y_out = y_stage;
+    }
+
+    // rectification
     if (model->score_transform.out_lte_in)
-        value = (value > p) ? p : value;
+        y_out = (y_out > *y_in) ? *y_in : y_out;
     if (model->score_transform.out_gte_in)
-        value = (value < p) ? p : value;
+        y_out = (y_out < *y_in) ? *y_in : y_out;
 
-    *prediction = value;
+    *y_in = y_out;
     return 0;
 }
 
@@ -104,10 +246,71 @@ static int clip(const VmafModel *model, double *prediction,
     return 0;
 }
 
+static int post_process_feature_from_another(VmafModel *model,
+                                              struct svm_node *node,
+                                              double correction_parameter,
+                                              double value_to_be_corrected,
+                                              char *guiding_feature_substr,
+                                              char *guided_feature_substr)
+{
+    int err = 0;
+
+    double guiding_score;
+    double guided_score;
+    bool found_guiding_score = false;
+    bool found_guided_score = false;
+    unsigned guided_idx;
+
+    for (unsigned i = 0; i < model->n_features; i++) {
+        if (strstr(model->feature[i].name, guiding_feature_substr) != NULL) {
+            if (found_guiding_score) {
+                vmaf_log(VMAF_LOG_LEVEL_ERROR,
+                         "post_process_feature_from_another(): Substring '%s' "
+                         "corresponds to more than one feature\n",
+                         guiding_feature_substr);
+                return -EINVAL;
+            }
+            guiding_score = node[i].value;
+            found_guiding_score = true;
+            err = denormalize_feature(model, model->feature[i].slope,
+                                      model->feature[i].intercept, &guiding_score);
+            if (err) return -EINVAL;
+        }
+        if (strstr(model->feature[i].name, guided_feature_substr) != NULL) {
+            if (found_guided_score) {
+                vmaf_log(VMAF_LOG_LEVEL_ERROR,
+                         "post_process_feature_from_another(): Substring '%s' "
+                         "corresponds to more than one feature\n",
+                         guided_feature_substr);
+                return -EINVAL;
+            }
+            guided_score = node[i].value;
+            found_guided_score = true;
+            err = denormalize_feature(model, model->feature[i].slope,
+                                      model->feature[i].intercept, &guided_score);
+            if (err) return -EINVAL;
+            if (guided_score == value_to_be_corrected)
+                guided_idx = i;
+            else
+                return 0;
+        }
+    }
+
+    double corrected_guided_score =
+        (-correction_parameter * guiding_score) + correction_parameter;
+    err = normalize(model, model->feature[guided_idx].slope,
+                    model->feature[guided_idx].intercept,
+                    &corrected_guided_score);
+    if (err) return -EINVAL;
+    node[guided_idx].value = corrected_guided_score;
+    return 0;
+}
+
 int vmaf_predict_score_at_index(VmafModel *model,
                                 VmafFeatureCollector *feature_collector,
                                 unsigned index, double *vmaf_score,
                                 bool write_prediction,
+                                bool propagate_metadata,
                                 enum VmafModelFlags flags)
 {
     if (!model) return -EINVAL;
@@ -120,24 +323,62 @@ int vmaf_predict_score_at_index(VmafModel *model,
     if (!node) return -ENOMEM;
 
     for (unsigned i = 0; i < model->n_features; i++) {
-        char buf[VMAF_FEATURE_NAME_DEFAULT_BUFFER_SIZE] = { 0 };
-        char *key = NULL;
-        double val;
+        VmafFeatureExtractor *fex =
+            vmaf_get_feature_extractor_by_feature_name(model->feature[i].name, 0);
 
+        if (!fex) {
+            vmaf_log(VMAF_LOG_LEVEL_ERROR,
+                     "vmaf_predict_score_at_index(): no feature extractor "
+                     "providing feature '%s'\n", model->feature[i].name);
+            err = -EINVAL;
+            goto free_node;
+        }
+
+        VmafDictionary *opts_dict = NULL;
         if (model->feature[i].opts_dict) {
-            key = model->feature[i].opts_dict->entry[0].key;
-            val = atof(model->feature[i].opts_dict->entry[0].val);
+            err = vmaf_dictionary_copy(&model->feature[i].opts_dict, &opts_dict);
+            if (err) return err;
+        }
+
+        VmafFeatureExtractorContext *fex_ctx;
+        err = vmaf_feature_extractor_context_create(&fex_ctx, fex, opts_dict);
+        if (err) {
+            vmaf_log(VMAF_LOG_LEVEL_ERROR,
+                     "vmaf_predict_score_at_index(): could not generate "
+                     "feature extractor context\n");
+            vmaf_dictionary_free(&opts_dict);
+            return err;
         }
 
         char *feature_name =
-            vmaf_feature_name(model->feature[i].name, key, val, buf,
-                              VMAF_FEATURE_NAME_DEFAULT_BUFFER_SIZE);
+            vmaf_feature_name_from_options(model->feature[i].name,
+                    fex_ctx->fex->options, fex_ctx->fex->priv);
+
+        vmaf_feature_extractor_context_destroy(fex_ctx);
+
+        if (!feature_name) {
+            vmaf_log(VMAF_LOG_LEVEL_ERROR,
+                     "vmaf_predict_score_at_index(): could not generate "
+                     "feature name\n");
+            err = -ENOMEM;
+            goto free_node;
+        }
 
         double feature_score;
         err = vmaf_feature_collector_get_score(feature_collector,
-                                               feature_name,
-                                               &feature_score, index);
-        if (err) goto free_node;
+                                               feature_name, &feature_score,
+                                               index);
+
+        if (err) {
+            if (!propagate_metadata) {
+              vmaf_log(VMAF_LOG_LEVEL_ERROR,
+                       "vmaf_predict_score_at_index(): no feature '%s' "
+                       "at index %d\n", feature_name, index);
+            }
+            free(feature_name);
+            goto free_node;
+        }
+        free(feature_name);
 
         err = normalize(model, model->feature[i].slope,
                         model->feature[i].intercept, &feature_score);
@@ -146,6 +387,16 @@ int vmaf_predict_score_at_index(VmafModel *model,
         node[i].index = i + 1;
         node[i].value = feature_score;
     }
+    if (model->chroma_from_luma.enabled) {
+        if (!model->chroma_from_luma.chroma_correction_parameter)
+            goto free_node;
+        err = post_process_feature_from_another(
+            model, node,
+            model->chroma_from_luma.chroma_correction_parameter,
+            0.0, "adm3", "speed_chroma");
+        if (err) goto free_node;
+    }
+
     node[model->n_features].index = -1;
 
     double prediction = svm_predict(model->svm, node);
@@ -199,7 +450,7 @@ static int vmaf_bootstrap_predict_score_at_index(
                                         VmafModelCollectionScore *score)
 {
     int err = 0;
-    double scores[model_collection->cnt];
+    double *scores = alloca(model_collection->cnt * sizeof(*scores));
 
     for (unsigned i = 0; i < model_collection->cnt; i++) {
         // mean, stddev, etc. are calculated on untransformed/unclipped scores
@@ -210,7 +461,7 @@ static int vmaf_bootstrap_predict_score_at_index(
         err = vmaf_predict_score_at_index(model_collection->model[i],
                                           feature_collector, index,
                                           &scores[i], false,
-                                          flags);
+                                          false, flags);
         if (err) return err;
 
         // do not override the model's transform/clip behavior
@@ -218,7 +469,7 @@ static int vmaf_bootstrap_predict_score_at_index(
         double score;
         err = vmaf_predict_score_at_index(model_collection->model[i],
                                           feature_collector, index,
-                                          &score, true, 0);
+                                          &score, true, false, 0);
         if (err) return err;
     }
 
@@ -265,7 +516,7 @@ static int vmaf_bootstrap_predict_score_at_index(
     const char *suffix_stddev = "_stddev";
     const size_t name_sz =
         strlen(model_collection->name) + strlen(suffix_lo) + 1;
-    const char name[name_sz];
+    char *name = alloca(name_sz);
     memset(name, 0, name_sz);
 
     snprintf(name, name_sz, "%s%s", model_collection->name, suffix_bagging);

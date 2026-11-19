@@ -7,18 +7,11 @@ import scipy.io
 from vmaf.config import VmafConfig
 from vmaf.core.perf_metric import RmsePerfMetric, SrccPerfMetric, PccPerfMetric, \
     KendallPerfMetric, AucPerfMetric, ResolvingPowerPerfMetric
-
 __copyright__ = "Copyright 2016-2020, Netflix, Inc."
 __license__ = "BSD+Patent"
 
 
 class AggrScorePerfMetricTest(unittest.TestCase):
-
-    def setUp(self):
-        pass
-
-    def tearDown(self):
-        pass
 
     def test_rmse_perf_metric(self):
         groundtruths = [1, 2, 3, 4]
@@ -141,10 +134,10 @@ class AggrScorePerfMetricTest(unittest.TestCase):
         mat_filepath = VmafConfig.test_resource_path('data_Toyama.mat')
         mat_dict = scipy.io.loadmat(mat_filepath)
         results = AucPerfMetric._metrics_performance(mat_dict['objScoDif'], mat_dict['signif'])
-        self.assertAlmostEqual(np.float(np.mean(results['AUC_DS'])), 0.69767003960902052, places=6)
-        self.assertAlmostEqual(np.float(np.mean(results['AUC_BW'])), 0.94454700301894534, places=6)
-        self.assertAlmostEqual(np.float(np.mean(results['CC_0'])), 0.88105386206276415, places=6)
-        self.assertAlmostEqual(np.float(np.mean(results['THR'])), 3.899105581509778, places=6)
+        self.assertAlmostEqual(float(np.mean(results['AUC_DS'])), 0.69767003960902052, places=6)
+        self.assertAlmostEqual(float(np.mean(results['AUC_BW'])), 0.94454700301894534, places=6)
+        self.assertAlmostEqual(float(np.mean(results['CC_0'])), 0.88105386206276415, places=6)
+        self.assertAlmostEqual(float(np.mean(results['THR'])), 3.899105581509778, places=6)
 
     def test_respow_perf_metric(self):
         np.random.seed(0)
@@ -162,6 +155,18 @@ class AggrScorePerfMetricTest(unittest.TestCase):
         metric = ResolvingPowerPerfMetric(groundtruths, predictions)
         result = metric.evaluate()
         self.assertAlmostEqual(result['score'], 9.0014569671225111, places=6)
+
+    def test_respow_perf_metric3(self):
+        np.random.seed(0)
+        groundtruths = []
+        for i in range(3):
+            groundtruths.append(list(np.random.normal(0, 1.0, [1, 10])[0] + i + 1))
+        groundtruths.append(list(np.random.normal(0, 1.0, [1, 8])[0] + 4))
+        predictions = [1, 2, 3, 4]
+        metric = ResolvingPowerPerfMetric(groundtruths, predictions)
+        result = metric.evaluate()
+        self.assertAlmostEqual(result['resolving_power_95perc'], 1.2045849280245293, places=6)
+        self.assertAlmostEqual(result['score'], 1.2045849280245293, places=6)
 
 
 if __name__ == '__main__':

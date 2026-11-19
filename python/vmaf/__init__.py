@@ -4,7 +4,7 @@ import logging
 
 __copyright__ = "Copyright 2016-2020, Netflix, Inc."
 __license__ = "BSD+Patent"
-__version__ = "2.0.0"
+__version__ = "4.0.0"
 
 logging.basicConfig()
 logger = logging.getLogger(os.path.splitext(os.path.basename(__file__))[0])
@@ -26,40 +26,47 @@ except BaseException:
 from . import config
 
 # Path to folder containing this file
-VMAF_LIB_FOLDER = os.path.dirname(os.path.abspath(__file__))
+VMAF_PYTHON_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
 # Assuming vmaf source checkout, path to top checked out folder
-VMAF_PROJECT = os.path.abspath(os.path.join(VMAF_LIB_FOLDER, '../..',))
+VMAF_ROOT = os.path.abspath(os.path.join(VMAF_PYTHON_ROOT, '..', '..', ))
+
+
+class ProcessRunner(object):
+
+    def run(self, cmd, kwargs):
+        try:
+            logger.info(cmd)
+            subprocess.check_output(cmd, stderr=subprocess.STDOUT, **kwargs)
+        except subprocess.CalledProcessError as e:
+            raise AssertionError(f'Process returned {e.returncode}, cmd: {cmd}, kwargs: {kwargs}, msg: {str(e.output)}')
 
 
 def run_process(cmd, **kwargs):
-    try:
-        logger.info(cmd)
-        subprocess.check_output(cmd, stderr=subprocess.STDOUT, **kwargs)
-    except subprocess.CalledProcessError as e:
-        raise AssertionError(f'Process returned {e.returncode}, cmd: {cmd}, msg: {str(e.output)}')
+    process_runner = ProcessRunner()
+    process_runner.run(cmd, kwargs)
     return 0
 
 
 def project_path(relative_path):
-    path = os.path.join(VMAF_PROJECT, relative_path)
+    path = os.path.join(VMAF_ROOT, relative_path)
     return path
 
 
 def required(path):
     if not os.path.exists(path):
-        raise AssertionError("%s does not exist, did you build?" % (path))
+        raise AssertionError(f"{path} does not exist, did you build?")
     return path
 
 
 def convert_pixel_format_ffmpeg2vmafexec(ffmpeg_pix_fmt):
-    '''
+    """
     Convert FFmpeg-style pixel format (pix_fmt) to vmaf style.
 
     :param ffmpeg_pix_fmt: FFmpeg-style pixel format, for example: yuv420p, yuv420p10le
     :return: (pixel_format: str, bitdepth: int), for example: (420, 8), (420, 10)
-    '''
+    """
     assert ffmpeg_pix_fmt in ['yuv420p', 'yuv422p', 'yuv444p',
                               'yuv420p10le', 'yuv422p10le', 'yuv444p10le',
                               'yuv420p12le', 'yuv422p12le', 'yuv444p12le',
@@ -97,15 +104,12 @@ class ExternalProgram(object):
     try:
         from . import externals
         external_vmaf_feature = config.VmafExternalConfig.vmaf_path()
-        external_vmafossexec = config.VmafExternalConfig.vmafossexec_path()
         external_vmafexec = config.VmafExternalConfig.vmafexec_path()
     except ImportError:
         external_vmaf_feature = None
-        external_vmafossexec = None
         external_vmafexec = None
 
     vmaf_feature = project_path(os.path.join("libvmaf", "build", "tools", "vmaf_feature")) if external_vmaf_feature is None else external_vmaf_feature
-    vmafossexec = project_path(os.path.join("libvmaf", "build", "tools", "vmafossexec")) if external_vmafossexec is None else external_vmafossexec
     vmafexec = project_path(os.path.join("libvmaf", "build", "tools", "vmaf")) if external_vmafexec is None else external_vmafexec
 
 
@@ -120,6 +124,15 @@ class ExternalProgramCaller(object):
         if options2[feature] is not None and 'disable_avx' in options2[feature]:
             options2['disable_avx'] = options2[feature]['disable_avx']
             del options2[feature]['disable_avx']
+        if options2[feature] is not None and 'n_threads' in options2[feature]:
+            options2['n_threads'] = options2[feature]['n_threads']
+            del options2[feature]['n_threads']
+        if options2[feature] is not None and '_open_workfile_method' in options2[feature]:
+            options2['_open_workfile_method'] = options2[feature]['_open_workfile_method']
+            del options2[feature]['_open_workfile_method']
+        if options2[feature] is not None and '_close_workfile_method' in options2[feature]:
+            options2['_close_workfile_method'] = options2[feature]['_close_workfile_method']
+            del options2[feature]['_close_workfile_method']
         return ExternalProgramCaller.call_vmafexec_multi_features(
             [feature], yuv_type, ref_path, dis_path, w, h, log_file_path, logger=logger, options=options2)
 
@@ -151,6 +164,10 @@ class ExternalProgramCaller(object):
             assert isinstance(options['disable_avx'], bool)
             if options['disable_avx'] is True:
                 cmd += ['--cpumask', '-1']
+
+        if options is not None and 'n_threads' in options:
+            assert isinstance(options['n_threads'], int) and options['n_threads'] >= 1
+            cmd += ['--threads', str(options['n_threads'])]
 
         for feature in features:
             if options is None:
@@ -194,49 +211,12 @@ class ExternalProgramCaller(object):
         run_process(vifdiff_feature_cmd, shell=True)
 
     @staticmethod
-    def call_vmafossexec(fmt, w, h, ref_path, dis_path, model, log_file_path, disable_clip_score,
-                         enable_transform_score, phone_model, disable_avx, n_thread, n_subsample,
-                         psnr, ssim, ms_ssim, ci, exe=None, logger=None):
-
-        if exe is None:
-            exe = required(ExternalProgram.vmafossexec)
-
-        vmafossexec_cmd = "{exe} {fmt} {w} {h} {ref_path} {dis_path} {model} --log {log_file_path} --log-fmt xml --thread {n_thread} --subsample {n_subsample}" \
-            .format(
-            exe=exe,
-            fmt=fmt,
-            w=w,
-            h=h,
-            ref_path=ref_path,
-            dis_path=dis_path,
-            model=model,
-            log_file_path=log_file_path,
-            n_thread=n_thread,
-            n_subsample=n_subsample)
-        if disable_clip_score:
-            vmafossexec_cmd += ' --disable-clip'
-        if enable_transform_score or phone_model:
-            vmafossexec_cmd += ' --enable-transform'
-        if disable_avx:
-            vmafossexec_cmd += ' --disable-avx'
-        if psnr:
-            vmafossexec_cmd += ' --psnr'
-        if ssim:
-            vmafossexec_cmd += ' --ssim'
-        if ms_ssim:
-            vmafossexec_cmd += ' --ms-ssim'
-        if ci:
-            vmafossexec_cmd += ' --ci'
-        if logger:
-            logger.info(vmafossexec_cmd)
-
-        run_process(vmafossexec_cmd, shell=True)
-
-    @staticmethod
     def call_vmafexec(reference, distorted, width, height, pixel_format, bitdepth,
                     float_psnr, psnr, float_ssim, ssim, float_ms_ssim, ms_ssim, float_moment,
                     no_prediction, models, subsample, n_threads, disable_avx, output, exe, logger,
-                    vif_enhn_gain_limit=None, adm_enhn_gain_limit=None, motion_force_zero=False):
+                    vif_enhn_gain_limit=None, adm_enhn_gain_limit=None, motion_force_zero=False,
+                    enc_width=None, enc_height=None, enc_bitdepth=None,
+                    color_ref=None, color_dist=None):
 
         if exe is None:
             exe = required(ExternalProgram.vmafexec)
@@ -252,6 +232,16 @@ class ExternalProgramCaller(object):
             pixel_format=pixel_format,
             bitdepth=bitdepth,
             output=output)
+
+        # per-input source colorimetry, e.g. {'range': 'limited', 'primaries': 'bt2020',
+        # 'trc': 'smpte2084', 'matrix': 'bt2020nc'}; all four keys are required
+        for suffix, color in (('ref', color_ref), ('dist', color_dist)):
+            if color is None:
+                continue
+            assert set(color) == {'range', 'primaries', 'trc', 'matrix'}, \
+                'color_{} needs exactly range, primaries, trc and matrix'.format(suffix)
+            for attribute, value in color.items():
+                vmafexec_cmd += ' --color_{}_{} {}'.format(attribute, suffix, value)
 
         if float_psnr:
             vmafexec_cmd += ' --feature float_psnr'
@@ -289,6 +279,12 @@ class ExternalProgramCaller(object):
                     assert isinstance(motion_force_zero, bool)
                     motion_force_zero = str(motion_force_zero).lower()
                     vmafexec_cmd += f':motion.motion_force_zero={motion_force_zero}:float_motion.motion_force_zero={motion_force_zero}'
+                if enc_width is not None:
+                    vmafexec_cmd += f':cambi.enc_width={enc_width}'
+                if enc_height is not None:
+                    vmafexec_cmd += f':cambi.enc_height={enc_height}'
+                if enc_bitdepth is not None:
+                    vmafexec_cmd += f':cambi.enc_bitdepth={enc_bitdepth}'
 
         assert isinstance(subsample, int) and subsample >= 1
         if subsample != 1:
@@ -305,3 +301,7 @@ class ExternalProgramCaller(object):
             logger.info(vmafexec_cmd)
 
         run_process(vmafexec_cmd, shell=True)
+
+
+def model_path(*components):
+    return os.path.join(VMAF_PYTHON_ROOT, "model", *components)
