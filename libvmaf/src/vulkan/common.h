@@ -38,7 +38,7 @@
 #define VMAF_VK_BINDINGS 16
 #define VMAF_VK_PUSH_BYTES 128
 #define VMAF_VK_MAX_SLOTS 8
-#define VMAF_VK_STAMPS 4
+#define VMAF_VK_STAMPS 12
 
 #define VMAF_VK_FUNCS(X) \
     X(vkGetPhysicalDeviceProperties) X(vkGetPhysicalDeviceMemoryProperties) \

@@ -110,6 +110,9 @@ struct VmafVkEngine {
     unsigned users;
     bool timing;
     double gpu_seconds;
+    /* VMAF_VULKAN_TIMING=2: modules one after another, GPU time of each */
+    bool timing_modules;
+    double module_gpu[VMAF_VK_ENGINE_MODULES];
     unsigned frames;
     /* VMAF_VULKAN_TIMING: host seconds */
     double t_created;     ///< when the engine was made

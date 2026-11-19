@@ -80,6 +80,17 @@ static void engine_destroy(VmafVkEngine *e)
         vmaf_log(VMAF_LOG_LEVEL_INFO,
                  "vulkan: %u frames, %.3f ms of GPU time per frame (%s)\n",
                  e->frames, e->gpu_seconds * 1000.0 / e->frames, names);
+        if (e->timing_modules) {
+            char per[256] = "";
+            for (unsigned i = 0; i < e->n_modules; i++) {
+                size_t n = strlen(per);
+                snprintf(per + n, sizeof(per) - n, "%s%s %.3f", i ? ", " : "",
+                         e->module[i].name,
+                         e->module_gpu[i] * 1000.0 / e->frames);
+            }
+            vmaf_log(VMAF_LOG_LEVEL_INFO,
+                     "vulkan: GPU ms per frame by module (serialized): %s\n", per);
+        }
         const double n = e->frames;
         vmaf_log(VMAF_LOG_LEVEL_INFO,
                  "vulkan: start-up: engine %.1f ms (buffers %.1f), setup %.1f ms "
@@ -154,6 +165,7 @@ int vmaf_vk_engine_get(VmafVulkanContext *ctx, enum VmafPixelFormat pix_fmt,
     e->chroma_size = padded((size_t)(e->cw ? e->cw : 1) * (e->ch ? e->ch : 1) * e->bps);
     const char *t = getenv("VMAF_VULKAN_TIMING");
     e->timing = t && atoi(t) > 0;
+    e->timing_modules = t && atoi(t) > 1;
     if (e->timing) e->t_created = vmaf_vk_now();
 
     err = vmaf_vk_init(&e->vk, e->s, VMAF_VK_ENGINE_SLOTS);
@@ -260,6 +272,13 @@ static void *slot_thread(void *arg)
         double gpu = 0, t0 = 0;
         if (!err && e->timing) {
             gpu = vmaf_vk_gpu_seconds(&e->vk, a.slot, 0, 1);
+            for (unsigned i = 0; e->timing_modules && i < e->n_modules; i++) {
+                const double g = vmaf_vk_gpu_seconds(&e->vk, a.slot,
+                                                     i ? 1 + i : 0, 2 + i);
+                pthread_mutex_lock(&e->lock);
+                if (g > 0) e->module_gpu[i] += g;
+                pthread_mutex_unlock(&e->lock);
+            }
             t0 = vmaf_vk_now();
         }
         for (unsigned i = 0; i < e->n_modules && !err; i++) {
@@ -370,6 +389,10 @@ static int submit_pending(VmafVkEngine *e)
     for (unsigned i = 0; i < e->n_modules && !err; i++) {
         VmafVkModule *m = &e->module[i];
         if (m->record) err = m->record(m, e, k, sl->index);
+        if (e->timing_modules) {
+            vmaf_vk_barrier(vk);
+            vmaf_vk_stamp(vk, 2 + i);
+        }
     }
     if (err) return err;
     vmaf_vk_barrier(vk);
