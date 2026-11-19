@@ -2,7 +2,7 @@
 layout(local_size_x = 8, local_size_y = 8) in;
 // SpEED (VMAF v1's chroma feature, libvmaf speed.c): one chroma plane as floats (v / scaler - 128), prescaled (bilinear or nearest, with the
 // source positions and weights libvmaf works out, from `tb`), filtered with the antialiasing filter and kept at every 16th row and column
-// (vif_filter1d_dec16_s). The rest (a 3x3 blur, the block statistics) is done on the CPU, on what this writes.
+// (vif_filter1d_dec16_s). The 3x3 blur and the block statistics follow (speed_common.glsl).
 layout(std430, binding = 0) readonly buffer Raw { uint raw[]; };
 layout(std430, binding = 1) readonly buffer Tables { int idx[]; } tb;    // SW x1, SW x2, SH y1, SH y2, then SW dx, SH dy (as float bits)
 layout(std430, binding = 2) readonly buffer Filter { float f[]; };

@@ -3,7 +3,7 @@
 #include "cambi_common.glsl"
 // The banding value (c value) of every pixel of one scale (calculate_c_values in cambi.c): from how many flat pixels of the window around it have
 // its value and values a few steps above and below it. Each workgroup also writes how many of its values are not 0, and their sum.
-// With pc.OW < 0 the c values are already there (cambi_cslide made them), and only the sums are made.
+// With pc.OW < 0 only the sums are made, of c values already in cval (not used by libvmaf).
 layout(std430, binding = 0) readonly buffer Img { uint img[]; };
 layout(std430, binding = 1) readonly buffer Mask { uint mask[]; };
 layout(std430, binding = 2) buffer CVal { float cval[]; };

@@ -1,4 +1,4 @@
-// SpEED's statistics on the GPU (speed_blur_v/h, speed_mean, speed_center, speed_cov, speed_small, speed_blocks, speed_score): libvmaf 3.2.1 speed.c's est_params() and
+// SpEED's statistics on the GPU (speed_blur_v/h, speed_mean, speed_center, speed_cov, speed_small, speed_blocks, speed_score): libvmaf speed.c's est_params() and
 // get_speed_score() after the decimation by 16 (speed_dec), for the 4 decimated planes of one SpEED unit (0, 1: the reference's U and V; 2, 3: the
 // decoded U and V). They redo the C code's float and double operations one by one, in its order: `precise` keeps the compiler from fusing a multiply
 // and an add (that rounds once instead of twice), division and square root go through double (Vulkan does not round float division correctly; a

@@ -63,7 +63,7 @@ int restore(int o, int t, bool angle_flag, out int k_out, out int rst0) {
 }
 
 // Decouple at band position o: the restored values x (h, v, d) and the additive impairment a, from the bands of the reference and the distorted
-// frame. k/r0: restore()'s k and unclamped value of the h band (VES_ADM_DUMP).
+// frame. k/r0: restore()'s k and unclamped value of the h band (for debugging).
 void decouple(int o, int N, out int x[3], out int a[3], out bool angle, out int kh_out, out int r0h_out) {
 	int oh, ov, od, th, tv, td;
 	if (pc.scale == 0) {
