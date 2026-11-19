@@ -154,6 +154,15 @@ typedef struct VmafVk {
     unsigned n_aliases;
     VmafVkBuf *owned;
     unsigned n_owned, cap_owned;
+    /* Device memory, of which buffers get pieces (one allocation for many
+     * buffers; a large buffer gets a block of its own). */
+    struct VmafVkBlock {
+        VkDeviceMemory mem;
+        uint32_t type;
+        VkDeviceSize size, used;
+        void *map;
+    } *blocks;
+    unsigned n_blocks, cap_blocks;
     uint64_t device_bytes, host_bytes;
     double buf_seconds; ///< host seconds in vmaf_vk_buffer()
 } VmafVk;

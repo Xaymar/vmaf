@@ -31,6 +31,9 @@
 #include "vulkan/common.h"
 #include "vulkan/shaders.h"
 
+/* bytes of a block of device memory that buffers are made in */
+#define VMAF_VK_BLOCK ((VkDeviceSize)64 << 20)
+
 static int vk_err(VkResult r, const char *what)
 {
     if (r == VK_SUCCESS) return 0;
@@ -453,11 +456,12 @@ void vmaf_vk_close(VmafVk *vk)
     for (unsigned i = 0; i < vk->n_dpools; i++)
         s->f.vkDestroyDescriptorPool(s->dev, vk->dpools[i], NULL);
     free(vk->dpools);
-    for (unsigned i = 0; i < vk->n_owned; i++) {
+    for (unsigned i = 0; i < vk->n_owned; i++)
         s->f.vkDestroyBuffer(s->dev, vk->owned[i].buf, NULL);
-        s->f.vkFreeMemory(s->dev, vk->owned[i].mem, NULL);
-    }
+    for (unsigned i = 0; i < vk->n_blocks; i++)
+        s->f.vkFreeMemory(s->dev, vk->blocks[i].mem, NULL);
     free(vk->owned);
+    free(vk->blocks);
     free(vk->aliases);
     memset(vk, 0, sizeof(*vk));
 }
@@ -543,16 +547,69 @@ static int vmaf_vk_buffer_(VmafVk *vk, VmafVkBuf *b, VkDeviceSize size,
             if (!seen) types[nt++] = i;
         }
     }
+    if (vk->n_blocks == vk->cap_blocks) {
+        unsigned cap = vk->cap_blocks ? vk->cap_blocks * 2 : 16;
+        struct VmafVkBlock *nb = realloc(vk->blocks, sizeof(*nb) * cap);
+        if (!nb) {
+            s->f.vkDestroyBuffer(s->dev, b->buf, NULL);
+            b->buf = VK_NULL_HANDLE;
+            return -ENOMEM;
+        }
+        vk->blocks = nb;
+        vk->cap_blocks = cap;
+    }
+    /* Each memory type in order of preference: a piece of a block of it with
+     * room, else a new block (of its own for a large buffer). */
     VkResult r = VK_ERROR_OUT_OF_DEVICE_MEMORY;
     int found = -1;
-    for (unsigned k = 0; k < nt; k++) {
+    struct VmafVkBlock *blk = NULL;
+    VkDeviceSize offset = 0;
+    const VkDeviceSize align = mr.alignment ? mr.alignment : 1;
+    for (unsigned k = 0; k < nt && found < 0; k++) {
+        const VkMemoryPropertyFlags fl = s->mem.memoryTypes[types[k]].propertyFlags;
+        /* smaller blocks where host-visible VRAM can be a 256 MB window */
+        const VkDeviceSize block = (fl & hv) && (fl & dl) ? VMAF_VK_BLOCK / 4
+                                                          : VMAF_VK_BLOCK;
+        for (unsigned i = 0; i < vk->n_blocks && found < 0; i++) {
+            struct VmafVkBlock *c = &vk->blocks[i];
+            if (c->type != types[k] || c->size < block) continue;
+            const VkDeviceSize o = (c->used + align - 1) / align * align;
+            if (o + mr.size > c->size) continue;
+            blk = c;
+            offset = o;
+            found = types[k];
+        }
+        if (found >= 0) break;
+        const VkDeviceSize want_size = mr.size * 2 > block ? mr.size : block;
         VkMemoryAllocateInfo mi = {
             .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-            .allocationSize = mr.size,
+            .allocationSize = want_size,
             .memoryTypeIndex = types[k],
         };
-        r = s->f.vkAllocateMemory(s->dev, &mi, NULL, &b->mem);
-        if (r == VK_SUCCESS) { found = types[k]; break; }
+        VkDeviceMemory mem;
+        r = s->f.vkAllocateMemory(s->dev, &mi, NULL, &mem);
+        if (r == VK_SUCCESS) {
+            blk = &vk->blocks[vk->n_blocks++];
+            memset(blk, 0, sizeof(*blk));
+            blk->mem = mem;
+            blk->type = types[k];
+            blk->size = want_size;
+            if (fl & hv) {
+                r = s->f.vkMapMemory(s->dev, mem, 0, VK_WHOLE_SIZE, 0, &blk->map);
+                if (r != VK_SUCCESS) {
+                    s->f.vkDestroyBuffer(s->dev, b->buf, NULL);
+                    b->buf = VK_NULL_HANDLE;
+                    return vk_err(r, "vkMapMemory");
+                }
+            }
+            if (fl & dl)
+                vk->device_bytes += want_size;
+            else
+                vk->host_bytes += want_size;
+            offset = 0;
+            found = types[k];
+            break;
+        }
         if (r != VK_ERROR_OUT_OF_DEVICE_MEMORY && r != VK_ERROR_OUT_OF_HOST_MEMORY)
             break;
     }
@@ -561,19 +618,13 @@ static int vmaf_vk_buffer_(VmafVk *vk, VmafVkBuf *b, VkDeviceSize size,
         b->buf = VK_NULL_HANDLE;
         return nt ? vk_err(r, "vkAllocateMemory") : -ENOMEM;
     }
+    blk->used = offset + mr.size;
+    b->mem = blk->mem;
     vk->owned[vk->n_owned++] = *b;
-    if (s->mem.memoryTypes[found].propertyFlags & dl)
-        vk->device_bytes += mr.size;
-    else
-        vk->host_bytes += mr.size;
-    err = vk_err(s->f.vkBindBufferMemory(s->dev, b->buf, b->mem, 0),
+    err = vk_err(s->f.vkBindBufferMemory(s->dev, b->buf, b->mem, offset),
                  "vkBindBufferMemory");
     if (err) return err;
-    if (s->mem.memoryTypes[found].propertyFlags & hv) {
-        err = vk_err(s->f.vkMapMemory(s->dev, b->mem, 0, VK_WHOLE_SIZE, 0, &b->map),
-                     "vkMapMemory");
-        if (err) return err;
-    }
+    if (blk->map) b->map = (uint8_t *)blk->map + offset;
     return 0;
 }
 
