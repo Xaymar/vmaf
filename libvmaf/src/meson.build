@@ -617,6 +617,7 @@ if is_vulkan_enabled
         vulkan_shaders_c,
         feature_src_dir + 'vulkan/integer_motion_vulkan.c',
         feature_src_dir + 'vulkan/integer_adm_vulkan.c',
+        feature_src_dir + 'vulkan/integer_vif_vulkan.c',
     ]
 endif
 
