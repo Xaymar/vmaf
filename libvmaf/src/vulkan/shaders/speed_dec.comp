@@ -15,11 +15,12 @@ layout(push_constant) uniform PC {
 	int fw;        // filter taps
 	int scaled;    // 0: no prescale
 	int out_off;   // where this plane's output starts in dst
-	float scaler;  // 1 (8 bit), 4 (10 bit)
+	float scaler;  // speed.c's picture_copy(): 1 (8 bit), 4 (10 bit), 16 (12 bit), 256 (16 bit)
+	int RS;        // samples per row of the plane in raw (W, or one more for odd sizes with subsampled chroma)
 } pc;
 
 float conv(int r, int c) {
-	const int i = r * pc.W + c;
+	const int i = r * pc.RS + c;
 	int v;
 	if (pc.bpc > 8) v = int((raw[i >> 1] >> ((i & 1) * 16)) & 65535u);
 	else v = int((raw[i >> 2] >> ((i & 3) * 8)) & 255u);

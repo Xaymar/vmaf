@@ -21,6 +21,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "dict.h"
@@ -1192,6 +1193,63 @@ int speed_close(SpeedState *s) {
         aligned_free(s->dis_results.variances);
 
     return 0;
+}
+
+/* The steps of speed_extract_score() after filter_and_downscale(), for planes
+ * that were decimated, blurred and had their blur subtracted elsewhere (the
+ * Vulkan speed_chroma): est_params() of each and get_speed_score(). */
+struct SpeedTail {
+    SpeedState state;
+    SpeedOptions options;
+};
+
+int speed_tail_init(SpeedTail **tail, int w, int h, double kernelscale,
+                    double prescale, char *prescale_method, double sigma_nn,
+                    double nn_floor, int weight_var_mode)
+{
+    SpeedTail *t = *tail = calloc(1, sizeof(*t));
+    if (!t) return -ENOMEM;
+    t->options = (SpeedOptions) {
+        .speed_kernelscale = kernelscale,
+        .speed_prescale = prescale,
+        .speed_prescale_method = prescale_method,
+        .speed_sigma_nn = sigma_nn,
+        .speed_nn_floor = nn_floor,
+        .speed_weight_var_mode = weight_var_mode,
+    };
+    int err = speed_init(&t->state, &t->options, w, h);
+    if (err) speed_tail_free(tail);
+    return err;
+}
+
+size_t speed_tail_float_stride(const SpeedTail *t)
+{
+    return t->state.float_stride;
+}
+
+int speed_tail_score(SpeedTail *t, const float *ref, const float *dis,
+                     float *score)
+{
+    SpeedState *s = &t->state;
+    SpeedOptions *opt = &t->options;
+    int err_ref = est_params(s, ref, opt->speed_sigma_nn, &(s->ref_results));
+    int err_dis = est_params(s, dis, opt->speed_sigma_nn, &(s->dis_results));
+    if ((err_ref && !err_dis) || (!err_ref && err_dis)) {
+        *score = 0.0f;
+    } else {
+        *score = get_speed_score(s->dimensions, s->ref_results, s->dis_results,
+                                 opt->speed_sigma_nn, opt->speed_nn_floor,
+                                 opt->speed_weight_var_mode);
+    }
+    return err_ref || err_dis;
+}
+
+void speed_tail_free(SpeedTail **tail)
+{
+    if (!*tail) return;
+    speed_close(&(*tail)->state);
+    free(*tail);
+    *tail = NULL;
 }
 
 #define DEFAULT_SPEED_SIGMA_NN (0.29)

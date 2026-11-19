@@ -619,6 +619,7 @@ if is_vulkan_enabled
         feature_src_dir + 'vulkan/integer_adm_vulkan.c',
         feature_src_dir + 'vulkan/integer_vif_vulkan.c',
         feature_src_dir + 'vulkan/cambi_vulkan.c',
+        feature_src_dir + 'vulkan/speed_chroma_vulkan.c',
     ]
 endif
 
