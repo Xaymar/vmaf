@@ -15,6 +15,10 @@ if is_cuda_enabled
   platform_specific_headers += 'libvmaf_cuda.h'
 endif
 
+if get_option('enable_vulkan')
+  platform_specific_headers += 'libvmaf_vulkan.h'
+endif
+
 # install headers
 install_headers(['libvmaf.h',
                 'feature.h',

@@ -21,6 +21,9 @@
 
 #include "libvmaf/picture.h"
 #include "libvmaf/libvmaf.h"
+#ifdef HAVE_VULKAN
+#include "libvmaf/libvmaf_vulkan.h"
+#endif
 #ifdef HAVE_CUDA
 #include "libvmaf/libvmaf_cuda.h"
 #endif
@@ -204,6 +207,26 @@ int main(int argc, char *argv[])
             }
         }
     }
+#endif
+
+#ifdef HAVE_VULKAN
+    VmafVulkanState *vk_state = NULL;
+    if (c.vulkan) {
+        VmafVulkanConfiguration vk_cfg = { .device_index = c.vulkan_device };
+        err = vmaf_vulkan_state_init(&vk_state, vk_cfg);
+        if (err) {
+            fprintf(stderr, "problem during vmaf_vulkan_state_init, using CPU\n");
+        } else {
+            err = vmaf_vulkan_import_state(vmaf, vk_state);
+            if (err) {
+                fprintf(stderr, "problem during vmaf_vulkan_import_state\n");
+                return -1;
+            }
+        }
+    }
+#else
+    if (c.vulkan)
+        fprintf(stderr, "built without Vulkan, using CPU\n");
 #endif
 
     // Preallocate picture pool to avoid allocation overhead
@@ -486,6 +509,9 @@ int main(int argc, char *argv[])
     video_input_close(&vid_ref);
     video_input_close(&vid_dist);
     vmaf_close(vmaf);
+#ifdef HAVE_VULKAN
+    if (vk_state) vmaf_vulkan_state_free(&vk_state);
+#endif
     cli_free(&c);
     return err;
 }

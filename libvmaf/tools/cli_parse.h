@@ -54,6 +54,8 @@ typedef struct {
     bool common_bitdepth;
     unsigned cpumask;
     unsigned gpumask;
+    bool vulkan;
+    int vulkan_device;
 } CLISettings;
 
 void cli_parse(const int argc, char *const *const argv,

@@ -33,6 +33,12 @@ if cc.get_id() == 'msvc'
 	add_project_arguments('-D_USE_MATH_DEFINES', language: ['c', 'cpp'])
 endif
 
+# The Vulkan feature extractors: HAVE_VULKAN must be the same in every
+# translation unit (it changes VmafFeatureExtractor), so it is set for all.
+if get_option('enable_vulkan')
+    add_project_arguments('-DHAVE_VULKAN=1', language: ['c', 'cpp'])
+endif
+
 # Header checks
 if cc.has_header('malloc.h', args: test_args)
     add_project_arguments('-DHAVE_MALLOC_H', language: ['c', 'cpp'])

@@ -60,6 +60,11 @@
 
 #include "picture_pool.h"
 
+#ifdef HAVE_VULKAN
+#include "libvmaf/libvmaf_vulkan.h"
+#include "vulkan/engine.h"
+#endif
+
 typedef struct VmafContext {
     VmafConfiguration cfg;
     VmafFeatureCollector *feature_collector;
@@ -109,6 +114,10 @@ typedef struct VmafContext {
     } convert;
     VmafPicture prev_ref;      // n-1 ref pic for PREV_REF extractors (in-order only)
     VmafPicture prev_prev_ref; // n-2 ref pic for PREV_REF extractors (in-order only)
+#ifdef HAVE_VULKAN
+    VmafVulkanContext *vulkan;
+    VmafVulkanState *own_vulkan; ///< made by vmaf_init() for VMAF_VULKAN
+#endif
 } VmafContext;
 
 typedef struct BatchThreadData {
@@ -150,6 +159,28 @@ int vmaf_init(VmafContext **vmaf, VmafConfiguration cfg)
     if (err) goto free_framesync;
     err = feature_extractor_vector_init(&(v->registered_feature_extractors));
     if (err) goto free_feature_collector;
+
+#ifdef HAVE_VULKAN
+    /* VMAF_VULKAN=<device index> (or "auto"): the Vulkan feature extractors
+     * for programs that do not call vmaf_vulkan_import_state() themselves
+     * (FFmpeg's libvmaf filter, for one). Without a usable device the CPU
+     * feature extractors are used as before. */
+    const char *vk_env = getenv("VMAF_VULKAN");
+    if (vk_env && *vk_env && strcmp(vk_env, "0") && strcmp(vk_env, "off")) {
+        VmafVulkanConfiguration vk_cfg = {
+            .device_index = strcmp(vk_env, "auto") ? atoi(vk_env) : -1,
+        };
+        if (!vmaf_vulkan_state_init(&v->own_vulkan, vk_cfg)) {
+            if (vmaf_vulkan_import_state(v, v->own_vulkan)) {
+                vmaf_vulkan_state_free(&v->own_vulkan);
+            }
+        } else {
+            vmaf_log(VMAF_LOG_LEVEL_WARNING,
+                     "VMAF_VULKAN is set, but no Vulkan device could be had; "
+                     "the features are computed on the CPU\n");
+        }
+    }
+#endif
 
     if (v->cfg.n_threads > 0) {
         VmafThreadPoolConfig tpool_cfg = {
@@ -347,6 +378,24 @@ int vmaf_fetch_preallocated_picture(VmafContext *vmaf, VmafPicture *pic)
     return vmaf_picture_pool_fetch(vmaf->picture_pool, pic);
 }
 
+#ifdef HAVE_VULKAN
+int vmaf_vulkan_import_state(VmafContext *vmaf, VmafVulkanState *vk_state)
+{
+    if (!vmaf) return -EINVAL;
+    if (!vk_state) return -EINVAL;
+    if (vmaf->vulkan) return -EINVAL;
+    return vmaf_vulkan_context_create(&vmaf->vulkan, vk_state);
+}
+
+static int set_fex_vulkan(VmafFeatureExtractorContext *fex_ctx,
+                          VmafContext *vmaf)
+{
+    if (fex_ctx->fex->flags & VMAF_FEATURE_EXTRACTOR_VULKAN)
+        fex_ctx->fex->vk_ctx = vmaf->vulkan;
+    return 0;
+}
+#endif
+
 static int set_fex_framesync(VmafFeatureExtractorContext *fex_ctx,
                               VmafContext *vmaf)
 {
@@ -370,6 +419,11 @@ int vmaf_close(VmafContext *vmaf)
         vmaf_picture_convert_context_close(vmaf->convert.dist);
     vmaf_framesync_destroy(vmaf->framesync);
     feature_extractor_vector_destroy(&(vmaf->registered_feature_extractors));
+#ifdef HAVE_VULKAN
+    vmaf_vulkan_context_destroy(&vmaf->vulkan);
+    if (vmaf->own_vulkan)
+        vmaf_vulkan_state_free(&vmaf->own_vulkan);
+#endif
     vmaf_feature_collector_destroy(vmaf->feature_collector);
     vmaf_thread_pool_destroy(vmaf->thread_pool);
     vmaf_fex_ctx_pool_destroy(vmaf->fex_ctx_pool);
@@ -406,8 +460,16 @@ int vmaf_use_feature(VmafContext *vmaf, const char *feature_name,
 
     int err = 0;
 
-    VmafFeatureExtractor *fex =
-        vmaf_get_feature_extractor_by_name(feature_name);
+    VmafFeatureExtractor *fex = NULL;
+#ifdef HAVE_VULKAN
+    if (vmaf->vulkan && !vmaf->cfg.gpumask) {
+        /* the Vulkan variant of the feature extractor, where there is one */
+        char vk_name[128];
+        snprintf(vk_name, sizeof(vk_name), "%s_vulkan", feature_name);
+        fex = vmaf_get_feature_extractor_by_name(vk_name);
+    }
+#endif
+    if (!fex) fex = vmaf_get_feature_extractor_by_name(feature_name);
     if (!fex) return -EINVAL;
 
     VmafDictionary *d = NULL;
@@ -422,6 +484,9 @@ int vmaf_use_feature(VmafContext *vmaf, const char *feature_name,
     err = vmaf_feature_extractor_context_create(&fex_ctx, fex, d);
 #ifdef HAVE_CUDA
     err |= set_fex_cuda_state(fex_ctx, vmaf);
+#endif
+#ifdef HAVE_VULKAN
+    err |= set_fex_vulkan(fex_ctx, vmaf);
 #endif
     err |= set_fex_framesync(fex_ctx, vmaf);
     if (err) return err;
@@ -455,9 +520,17 @@ int vmaf_use_features_from_model(VmafContext *vmaf, VmafModel *model)
     RegisteredFeatureExtractors *rfe = &(vmaf->registered_feature_extractors);
 
     for (unsigned i = 0; i < model->n_features; i++) {
-        VmafFeatureExtractor *fex =
-            vmaf_get_feature_extractor_by_feature_name(model->feature[i].name,
-                                                       fex_flags);
+        VmafFeatureExtractor *fex = NULL;
+#ifdef HAVE_VULKAN
+        /* the Vulkan feature extractor of the feature where there is one,
+         * else the CPU's */
+        if (vmaf->vulkan && !vmaf->cfg.gpumask)
+            fex = vmaf_get_feature_extractor_by_feature_name(model->feature[i].name,
+                    fex_flags | VMAF_FEATURE_EXTRACTOR_VULKAN);
+        if (!fex)
+#endif
+        fex = vmaf_get_feature_extractor_by_feature_name(model->feature[i].name,
+                                                         fex_flags);
         if (!fex) {
             vmaf_log(VMAF_LOG_LEVEL_ERROR,
                      "could not initialize feature extractor \"%s\"\n",
@@ -474,6 +547,9 @@ int vmaf_use_features_from_model(VmafContext *vmaf, VmafModel *model)
         err = vmaf_feature_extractor_context_create(&fex_ctx, fex, d);
 #ifdef HAVE_CUDA
         err |= set_fex_cuda_state(fex_ctx, vmaf);
+#endif
+#ifdef HAVE_VULKAN
+        err |= set_fex_vulkan(fex_ctx, vmaf);
 #endif
         err |= set_fex_framesync(fex_ctx, vmaf);
         if (err) return err;

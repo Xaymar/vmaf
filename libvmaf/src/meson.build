@@ -556,6 +556,69 @@ endif
 
 math_lib = cc.find_library('m', required : false)
 
+# Vulkan: the headers only (the loader is loaded at run time), the compute
+# shaders compiled to SPIR-V and embedded into the library.
+is_vulkan_enabled = get_option('enable_vulkan') == true
+vulkan_dependency = []
+vulkan_sources = []
+if is_vulkan_enabled
+    _vk = dependency('vulkan', required: false)
+    if _vk.found()
+        vulkan_dependency += _vk.partial_dependency(compile_args: true, includes: true)
+    elif not cc.has_header('vulkan/vulkan.h')
+        error('enable_vulkan needs the Vulkan headers (vulkan/vulkan.h)')
+    endif
+    if host_machine.system() != 'windows'
+        vulkan_dependency += cc.find_library('dl', required: false)
+    endif
+
+    vulkan_shader_dir = 'vulkan/shaders/'
+    vulkan_shader_names = [
+        'adm_cmsum', 'adm_dcm', 'adm_dcm_multi', 'adm_den', 'adm_dwt',
+        'cambi_cvalue', 'cambi_cvalue_cols', 'cambi_cvalue_p32',
+        'cambi_decimate', 'cambi_dither', 'cambi_dmode', 'cambi_front',
+        'cambi_mask', 'cambi_mode', 'cambi_pre',
+        'motion_x', 'motion_xy_wide', 'motion_y',
+        'speed_blocks', 'speed_blur_h', 'speed_blur_v', 'speed_center',
+        'speed_cov', 'speed_dec', 'speed_mean', 'speed_score', 'speed_small',
+        'vif_stat_h', 'vif_stat_v', 'vif_sub_h', 'vif_sub_v',
+    ]
+    vulkan_shader_inc = meson.current_source_dir() / 'vulkan' / 'shaders'
+    glslc = find_program('glslc', required: false)
+    if glslc.found()
+        spv_command = [glslc, '--target-env=vulkan1.2', '-O', '-I', vulkan_shader_inc,
+                       '-MD', '-MF', '@DEPFILE@', '-o', '@OUTPUT@', '@INPUT@']
+    else
+        glslang = find_program('glslangValidator', 'glslang', required: false)
+        if not glslang.found()
+            error('enable_vulkan needs glslc (shaderc) or glslangValidator to compile the shaders')
+        endif
+        spv_command = [glslang, '-V', '--target-env', 'vulkan1.2', '-I' + vulkan_shader_inc,
+                       '--depfile', '@DEPFILE@', '-o', '@OUTPUT@', '@INPUT@']
+    endif
+    vulkan_spv = []
+    foreach name : vulkan_shader_names
+        vulkan_spv += custom_target('vk_spv_' + name,
+            input: vulkan_shader_dir + name + '.comp',
+            output: name + '.spv',
+            depfile: name + '.spv.d',
+            command: spv_command,
+        )
+    endforeach
+    python = find_program('python3', 'python')
+    vulkan_shaders_c = custom_target('vulkan_shaders_c',
+        input: vulkan_spv,
+        output: 'vulkan_shaders.c',
+        command: [python, files('vulkan/embed_spirv.py'), '@OUTPUT@', '@INPUT@'],
+    )
+    vulkan_sources = [
+        src_dir + 'vulkan/common.c',
+        src_dir + 'vulkan/engine.c',
+        vulkan_shaders_c,
+        feature_src_dir + 'vulkan/integer_motion_vulkan.c',
+    ]
+endif
+
 vmaf_include = include_directories(
     src_dir,
     feature_src_dir,
@@ -616,6 +679,8 @@ if float_enabled
     ]
 endif
 
+libvmaf_feature_sources += vulkan_sources
+
 if is_cuda_enabled
     libvmaf_feature_sources += [
         feature_src_dir + 'cuda/integer_adm_cuda.c',
@@ -628,7 +693,7 @@ libvmaf_feature_static_lib = static_library(
     'libvmaf_feature',
     libvmaf_feature_sources,
     include_directories : [libvmaf_include, vmaf_include, cuda_dir],
-    dependencies: [thread_lib, stdatomic_dependency, cuda_dependency, builtin_clz_dependency],
+    dependencies: [thread_lib, stdatomic_dependency, cuda_dependency, builtin_clz_dependency, vulkan_dependency],
     objects: common_cuda_objects
 )
 
@@ -691,6 +756,7 @@ _vmaf_deps = [
     cuda_dependency,
     builtin_clz_dependency,
     rev_dep,
+    vulkan_dependency,
     zimg_dependency,
 ]
 _vmaf_objs = [

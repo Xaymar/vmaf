@@ -39,6 +39,7 @@ enum VmafFeatureExtractorFlags {
     VMAF_FEATURE_EXTRACTOR_CUDA = 1 << 1,
     VMAF_FEATURE_FRAME_SYNC = 1 << 2,
     VMAF_FEATURE_EXTRACTOR_PREV_REF = 1 << 3,
+    VMAF_FEATURE_EXTRACTOR_VULKAN = 1 << 4,
 };
 
 struct VmafFeatureExtractorContext;
@@ -107,6 +108,10 @@ typedef struct VmafFeatureExtractor {
 
     #ifdef HAVE_CUDA
     VmafCudaState *cu_state; ///< VmafCudaState, set by framework
+    #endif
+
+    #ifdef HAVE_VULKAN
+    struct VmafVulkanContext *vk_ctx; ///< set by framework
     #endif
 
     VmafFrameSyncContext *framesync;

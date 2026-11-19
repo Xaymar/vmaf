@@ -38,6 +38,11 @@ option('enable_cuda',
     value: false,
     description: 'Enable CUDA support')
 
+option('enable_vulkan',
+    type: 'boolean',
+    value: false,
+    description: 'Enable the Vulkan compute feature extractors (needs the Vulkan headers and glslc or glslangValidator; the Vulkan loader is loaded at run time)')
+
 option('enable_nvtx',
     type: 'boolean',
     value: false,
