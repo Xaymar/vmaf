@@ -807,6 +807,15 @@ static int module_create(VmafVkModule *m, VmafVkEngine *e)
 
 /* --- the feature extractor --- */
 
+/* What the GPU does not compute; the CPU's integer_adm does those. */
+static bool usable(VmafFeatureExtractor *fex)
+{
+    AdmVkState *s = fex->priv;
+    return !s->adm_skip_scale0 && s->adm_csf_mode != ADM_CSF_MODE_BARTEN &&
+           s->adm_csf_mode >= 0 &&
+           s->adm_csf_mode <= ADM_CSF_MODE_BARTEN_WATSON_BLEND_MAE;
+}
+
 static int init(VmafFeatureExtractor *fex, enum VmafPixelFormat pix_fmt,
                 unsigned bpc, unsigned w, unsigned h)
 {
@@ -924,4 +933,5 @@ VmafFeatureExtractor vmaf_fex_integer_adm_vulkan = {
     .priv_size = sizeof(AdmVkState),
     .provided_features = provided_features,
     .flags = VMAF_FEATURE_EXTRACTOR_TEMPORAL | VMAF_FEATURE_EXTRACTOR_VULKAN,
+    .vulkan_usable = usable,
 };

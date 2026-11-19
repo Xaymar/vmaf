@@ -112,6 +112,10 @@ typedef struct VmafFeatureExtractor {
 
     #ifdef HAVE_VULKAN
     struct VmafVulkanContext *vk_ctx; ///< set by framework
+    /* Vulkan feature extractors: whether the GPU can compute what this
+     * instance's options ask for (called once they are set); if not, the CPU
+     * feature extractor of the same name is used instead. NULL: always. */
+    bool (*vulkan_usable)(struct VmafFeatureExtractor *fex);
     #endif
 
     VmafFrameSyncContext *framesync;

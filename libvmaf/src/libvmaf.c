@@ -387,6 +387,35 @@ int vmaf_vulkan_import_state(VmafContext *vmaf, VmafVulkanState *vk_state)
     return vmaf_vulkan_context_create(&vmaf->vulkan, vk_state);
 }
 
+/* A Vulkan feature extractor that cannot compute what its options ask for
+ * (vulkan_usable): the CPU feature extractor of the same name (without
+ * "_vulkan") instead, with the same options. */
+static int vulkan_fallback(VmafFeatureExtractorContext **fex_ctx)
+{
+    VmafFeatureExtractor *fex = (*fex_ctx)->fex;
+    if (!(fex->flags & VMAF_FEATURE_EXTRACTOR_VULKAN) || !fex->vulkan_usable ||
+        fex->vulkan_usable(fex))
+        return 0;
+
+    char name[128];
+    snprintf(name, sizeof(name), "%s", fex->name);
+    char *suffix = strstr(name, "_vulkan");
+    if (suffix) *suffix = '\0';
+    VmafFeatureExtractor *cpu = vmaf_get_feature_extractor_by_name(name);
+    if (!cpu) return -EINVAL;
+
+    VmafDictionary *d = NULL;
+    if ((*fex_ctx)->opts_dict) {
+        int err = vmaf_dictionary_copy(&(*fex_ctx)->opts_dict, &d);
+        if (err) return err;
+    }
+    vmaf_log(VMAF_LOG_LEVEL_INFO,
+             "vulkan: %s with these options is computed on the CPU\n", name);
+    vmaf_feature_extractor_context_destroy(*fex_ctx);
+    *fex_ctx = NULL;
+    return vmaf_feature_extractor_context_create(fex_ctx, cpu, d);
+}
+
 static int set_fex_vulkan(VmafFeatureExtractorContext *fex_ctx,
                           VmafContext *vmaf)
 {
@@ -482,6 +511,10 @@ int vmaf_use_feature(VmafContext *vmaf, const char *feature_name,
 
     VmafFeatureExtractorContext *fex_ctx;
     err = vmaf_feature_extractor_context_create(&fex_ctx, fex, d);
+#ifdef HAVE_VULKAN
+    if (!err) err = vulkan_fallback(&fex_ctx);
+    if (err) return err;
+#endif
 #ifdef HAVE_CUDA
     err |= set_fex_cuda_state(fex_ctx, vmaf);
 #endif
@@ -545,6 +578,10 @@ int vmaf_use_features_from_model(VmafContext *vmaf, VmafModel *model)
             if (err) return err;
         }
         err = vmaf_feature_extractor_context_create(&fex_ctx, fex, d);
+#ifdef HAVE_VULKAN
+        if (!err) err = vulkan_fallback(&fex_ctx);
+        if (err) return err;
+#endif
 #ifdef HAVE_CUDA
         err |= set_fex_cuda_state(fex_ctx, vmaf);
 #endif

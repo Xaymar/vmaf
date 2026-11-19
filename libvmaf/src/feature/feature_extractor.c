@@ -59,6 +59,7 @@ extern VmafFeatureExtractor vmaf_fex_integer_motion_cuda;
 extern VmafFeatureExtractor vmaf_fex_integer_motion_vulkan;
 extern VmafFeatureExtractor vmaf_fex_integer_adm_vulkan;
 extern VmafFeatureExtractor vmaf_fex_integer_vif_vulkan;
+extern VmafFeatureExtractor vmaf_fex_cambi_vulkan;
 #endif
 extern VmafFeatureExtractor vmaf_fex_null;
 
@@ -93,6 +94,7 @@ static VmafFeatureExtractor *feature_extractor_list[] = {
     &vmaf_fex_integer_motion_vulkan,
     &vmaf_fex_integer_adm_vulkan,
     &vmaf_fex_integer_vif_vulkan,
+    &vmaf_fex_cambi_vulkan,
 #endif
     &vmaf_fex_null,
     NULL
