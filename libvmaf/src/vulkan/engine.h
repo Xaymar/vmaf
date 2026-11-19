@@ -111,6 +111,17 @@ struct VmafVkEngine {
     bool timing;
     double gpu_seconds;
     unsigned frames;
+    /* VMAF_VULKAN_TIMING: host seconds */
+    double t_created;     ///< when the engine was made
+    double t_engine;      ///< vmaf_vk_engine_get (buffers, threads)
+    double t_engine_buf;  ///< ... of it in vmaf_vk_buffer
+    double t_setup;       ///< setup() before the first frame (modules)
+    double t_first_done;  ///< when the first frame's results were in
+    double t_wait;        ///< waiting for a free slot
+    double t_copy;        ///< copying planes into staging
+    double t_record;      ///< recording and submitting
+    double t_results;     ///< modules' results (slot threads, summed)
+    double t_flush;       ///< waiting in vmaf_vk_engine_flush
 };
 
 /* The buffer of a frame plane that slot `slot` reads: for copies (which do not

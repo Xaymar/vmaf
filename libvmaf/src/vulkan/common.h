@@ -93,6 +93,10 @@ struct VmafVulkanState {
     pthread_mutex_t pipe_lock;
     VkPipeline *pipelines; ///< per shader in vmaf_vulkan_shaders, made on first use
     unsigned n_shaders;
+    /* VMAF_VULKAN_TIMING: host seconds spent making pipelines (pipe_lock) */
+    bool timing;
+    double pipe_seconds;
+    unsigned n_pipes;
 };
 
 typedef struct VmafVkBuf {
@@ -151,7 +155,11 @@ typedef struct VmafVk {
     VmafVkBuf *owned;
     unsigned n_owned, cap_owned;
     uint64_t device_bytes, host_bytes;
+    double buf_seconds; ///< host seconds in vmaf_vk_buffer()
 } VmafVk;
+
+/* A monotonic clock in seconds (for VMAF_VULKAN_TIMING). */
+double vmaf_vk_now(void);
 
 int vmaf_vk_init(VmafVk *vk, VmafVulkanState *s, int slots);
 void vmaf_vk_close(VmafVk *vk);

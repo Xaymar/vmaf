@@ -80,6 +80,21 @@ static void engine_destroy(VmafVkEngine *e)
         vmaf_log(VMAF_LOG_LEVEL_INFO,
                  "vulkan: %u frames, %.3f ms of GPU time per frame (%s)\n",
                  e->frames, e->gpu_seconds * 1000.0 / e->frames, names);
+        const double n = e->frames;
+        vmaf_log(VMAF_LOG_LEVEL_INFO,
+                 "vulkan: start-up: engine %.1f ms (buffers %.1f), setup %.1f ms "
+                 "(buffers %.1f, %u pipelines %.1f), first results %.1f ms "
+                 "after the engine was made\n",
+                 e->t_engine * 1e3, e->t_engine_buf * 1e3, e->t_setup * 1e3,
+                 (e->vk.buf_seconds - e->t_engine_buf) * 1e3, e->s->n_pipes,
+                 e->s->pipe_seconds * 1e3,
+                 (e->t_first_done - e->t_created) * 1e3);
+        vmaf_log(VMAF_LOG_LEVEL_INFO,
+                 "vulkan: host per frame: wait %.3f ms, copy %.3f ms, record+"
+                 "submit %.3f ms, results %.3f ms; flush %.1f ms\n",
+                 e->t_wait * 1e3 / n, e->t_copy * 1e3 / n,
+                 e->t_record * 1e3 / n, e->t_results * 1e3 / n,
+                 e->t_flush * 1e3);
     }
     for (unsigned i = 0; i < e->n_modules; i++)
         if (e->module[i].close) e->module[i].close(&e->module[i], e);
@@ -139,6 +154,7 @@ int vmaf_vk_engine_get(VmafVulkanContext *ctx, enum VmafPixelFormat pix_fmt,
     e->chroma_size = padded((size_t)(e->cw ? e->cw : 1) * (e->ch ? e->ch : 1) * e->bps);
     const char *t = getenv("VMAF_VULKAN_TIMING");
     e->timing = t && atoi(t) > 0;
+    if (e->timing) e->t_created = vmaf_vk_now();
 
     err = vmaf_vk_init(&e->vk, e->s, VMAF_VK_ENGINE_SLOTS);
     if (err) goto fail;
@@ -186,6 +202,10 @@ int vmaf_vk_engine_get(VmafVulkanContext *ctx, enum VmafPixelFormat pix_fmt,
         e->slot[k].thread_up = true;
     }
 
+    if (e->timing) {
+        e->t_engine = vmaf_vk_now() - e->t_created;
+        e->t_engine_buf = e->vk.buf_seconds;
+    }
     e->users = 1;
     ctx->engine = e;
     *engine = e;
@@ -237,16 +257,24 @@ static void *slot_thread(void *arg)
         pthread_mutex_unlock(&e->lock);
 
         int err = vmaf_vk_wait(&e->vk, a.slot);
-        double gpu = 0;
-        if (!err && e->timing) gpu = vmaf_vk_gpu_seconds(&e->vk, a.slot, 0, 1);
+        double gpu = 0, t0 = 0;
+        if (!err && e->timing) {
+            gpu = vmaf_vk_gpu_seconds(&e->vk, a.slot, 0, 1);
+            t0 = vmaf_vk_now();
+        }
         for (unsigned i = 0; i < e->n_modules && !err; i++) {
             VmafVkModule *m = &e->module[i];
             if (m->results) err = m->results(m, e, a.slot, sl->index, sl->fc);
         }
 
+        const double t1 = e->timing ? vmaf_vk_now() : 0;
         pthread_mutex_lock(&e->lock);
         if (err && !e->error) e->error = err;
         if (gpu > 0) e->gpu_seconds += gpu;
+        if (e->timing) {
+            e->t_results += t1 - t0;
+            if (!e->frames) e->t_first_done = t1;
+        }
         e->frames++;
         sl->state = SLOT_FREE;
         pthread_cond_broadcast(&e->changed);
@@ -308,9 +336,12 @@ static int submit_pending(VmafVkEngine *e)
     e->pending = false;
     int err = 0;
     if (!e->set_up) {
+        const double t0 = e->timing ? vmaf_vk_now() : 0;
         err = setup(e);
+        if (e->timing) e->t_setup = vmaf_vk_now() - t0;
         if (err) return err;
     }
+    const double t0 = e->timing ? vmaf_vk_now() : 0;
     const int k = e->pending_slot;
     VmafVkEngineSlot *sl = &e->slot[k];
     VmafVk *vk = &e->vk;
@@ -345,6 +376,7 @@ static int submit_pending(VmafVkEngine *e)
     vmaf_vk_stamp(vk, 1);
     err = vmaf_vk_submit(vk, k);
     if (err) return err;
+    if (e->timing) e->t_record += vmaf_vk_now() - t0;
 
     pthread_mutex_lock(&e->lock);
     sl->state = SLOT_BUSY;
@@ -370,6 +402,7 @@ int vmaf_vk_engine_extract(VmafVkEngine *e, VmafPicture *ref,
         const int k = e->next_slot;
         e->next_slot = (e->next_slot + 1) % VMAF_VK_ENGINE_SLOTS;
         VmafVkEngineSlot *sl = &e->slot[k];
+        double t0 = e->timing ? vmaf_vk_now() : 0;
         pthread_mutex_lock(&e->lock);
         while (sl->state != SLOT_FREE)
             pthread_cond_wait(&e->changed, &e->lock);
@@ -377,6 +410,11 @@ int vmaf_vk_engine_extract(VmafVkEngine *e, VmafPicture *ref,
         sl->state = SLOT_FILLED;
         pthread_mutex_unlock(&e->lock);
         if (err) return err;
+        if (e->timing) {
+            const double t1 = vmaf_vk_now();
+            e->t_wait += t1 - t0;
+            t0 = t1;
+        }
 
         copy_plane(sl->in[0].map, ref->data[0], ref->stride[0], e->w, e->h, e->bps);
         copy_plane(sl->in[1].map, dist->data[0], dist->stride[0], e->w, e->h, e->bps);
@@ -386,21 +424,25 @@ int vmaf_vk_engine_extract(VmafVkEngine *e, VmafPicture *ref,
         e->pending = true;
         e->pending_slot = k;
         e->pending_index = index;
+        if (e->timing) e->t_copy += vmaf_vk_now() - t0;
     }
 
     VmafVkEngineSlot *sl = &e->slot[e->pending_slot];
     if (e->want_chroma && e->cw && !sl->chroma_in) {
+        const double t0 = e->timing ? vmaf_vk_now() : 0;
         copy_plane(sl->in[2].map, ref->data[1], ref->stride[1], e->cw, e->ch, e->bps);
         copy_plane(sl->in[3].map, ref->data[2], ref->stride[2], e->cw, e->ch, e->bps);
         copy_plane(sl->in[4].map, dist->data[1], dist->stride[1], e->cw, e->ch, e->bps);
         copy_plane(sl->in[5].map, dist->data[2], dist->stride[2], e->cw, e->ch, e->bps);
         sl->chroma_in = true;
+        if (e->timing) e->t_copy += vmaf_vk_now() - t0;
     }
     return 0;
 }
 
 int vmaf_vk_engine_flush(VmafVkEngine *e)
 {
+    const double t0 = e->timing ? vmaf_vk_now() : 0;
     int err = submit_pending(e);
     if (err) set_error(e, err);
     pthread_mutex_lock(&e->lock);
@@ -409,6 +451,7 @@ int vmaf_vk_engine_flush(VmafVkEngine *e)
             pthread_cond_wait(&e->changed, &e->lock);
     err = e->error;
     pthread_mutex_unlock(&e->lock);
+    if (e->timing) e->t_flush += vmaf_vk_now() - t0;
     return err;
 }
 

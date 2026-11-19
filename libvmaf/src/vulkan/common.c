@@ -19,6 +19,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -90,14 +91,34 @@ static bool device_usable(VmafVulkanState *s, VkPhysicalDevice p)
 
 void vmaf_vulkan_state_release(VmafVulkanState *s);
 
+double vmaf_vk_now(void)
+{
+#ifdef _WIN32
+    static LARGE_INTEGER freq;
+    LARGE_INTEGER c;
+    if (!freq.QuadPart) QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&c);
+    return (double)c.QuadPart / (double)freq.QuadPart;
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec * 1e-9;
+#endif
+}
+
 int vmaf_vulkan_state_init(VmafVulkanState **vk_state,
                            VmafVulkanConfiguration cfg)
 {
+    const char *tm = getenv("VMAF_VULKAN_TIMING");
+    const bool timing = tm && atoi(tm) > 0;
+    double t0 = timing ? vmaf_vk_now() : 0, t_inst = 0, t_dev0 = 0, t_dev = 0;
+
     if (!vk_state) return -EINVAL;
     *vk_state = NULL;
 
     VmafVulkanState *s = calloc(1, sizeof(*s));
     if (!s) return -ENOMEM;
+    s->timing = timing;
     pthread_mutex_init(&s->queue_lock, NULL);
     pthread_mutex_init(&s->xqueue_lock, NULL);
     pthread_mutex_init(&s->pipe_lock, NULL);
@@ -126,6 +147,7 @@ int vmaf_vulkan_state_init(VmafVulkanState **vk_state,
     };
     err = vk_err(create_instance(&ici, NULL, &s->inst), "vkCreateInstance");
     if (err) goto fail;
+    if (timing) t_inst = vmaf_vk_now();
 
 #define VMAF_VK_LOAD(n) \
     s->f.n = (PFN_##n)gipa(s->inst, #n); \
@@ -244,9 +266,11 @@ int vmaf_vulkan_state_init(VmafVulkanState **vk_state,
         .pQueueCreateInfos = qci,
         .pEnabledFeatures = &feats,
     };
+    if (timing) t_dev0 = vmaf_vk_now();
     err = vk_err(s->f.vkCreateDevice(s->phys, &dci, NULL, &s->dev),
                  "vkCreateDevice");
     if (err) goto fail;
+    if (timing) t_dev = vmaf_vk_now();
     s->f.vkGetDeviceQueue(s->dev, s->family, 0, &s->queue);
     if (s->has_x)
         s->f.vkGetDeviceQueue(s->dev, s->xfamily,
@@ -290,6 +314,14 @@ int vmaf_vulkan_state_init(VmafVulkanState **vk_state,
     if (!s->pipelines) { err = -ENOMEM; goto fail; }
 
     vmaf_log(VMAF_LOG_LEVEL_INFO, "vulkan: using %s\n", s->name);
+    if (timing) {
+        const double t1 = vmaf_vk_now();
+        vmaf_log(VMAF_LOG_LEVEL_INFO,
+                 "vulkan: init %.1f ms (loader+instance %.1f, devices %.1f, "
+                 "vkCreateDevice %.1f, layouts %.1f)\n", (t1 - t0) * 1e3,
+                 (t_inst - t0) * 1e3, (t_dev0 - t_inst) * 1e3,
+                 (t_dev - t_dev0) * 1e3, (t1 - t_dev) * 1e3);
+    }
     *vk_state = s;
     return 0;
 
@@ -430,8 +462,21 @@ void vmaf_vk_close(VmafVk *vk)
     memset(vk, 0, sizeof(*vk));
 }
 
+static int vmaf_vk_buffer_(VmafVk *vk, VmafVkBuf *b, VkDeviceSize size,
+                           enum VmafVkMemory kind);
+
 int vmaf_vk_buffer(VmafVk *vk, VmafVkBuf *b, VkDeviceSize size,
                    enum VmafVkMemory kind)
+{
+    VmafVulkanState *s = vk->s;
+    const double t0 = s->timing ? vmaf_vk_now() : 0;
+    int err = vmaf_vk_buffer_(vk, b, size, kind);
+    if (s->timing) vk->buf_seconds += vmaf_vk_now() - t0;
+    return err;
+}
+
+static int vmaf_vk_buffer_(VmafVk *vk, VmafVkBuf *b, VkDeviceSize size,
+                           enum VmafVkMemory kind)
 {
     VmafVulkanState *s = vk->s;
     memset(b, 0, sizeof(*b));
@@ -547,6 +592,7 @@ static int shader_pipeline(VmafVulkanState *s, const char *name,
     int err = 0;
     pthread_mutex_lock(&s->pipe_lock);
     if (!s->pipelines[idx]) {
+        const double t0 = s->timing ? vmaf_vk_now() : 0;
         VkShaderModuleCreateInfo si = {
             .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
             .codeSize = vmaf_vulkan_shaders[idx].size,
@@ -569,6 +615,10 @@ static int shader_pipeline(VmafVulkanState *s, const char *name,
             err = vk_err(s->f.vkCreateComputePipelines(s->dev, VK_NULL_HANDLE,
                          1, &pi, NULL, &s->pipelines[idx]), name);
             s->f.vkDestroyShaderModule(s->dev, sm, NULL);
+        }
+        if (s->timing) {
+            s->pipe_seconds += vmaf_vk_now() - t0;
+            s->n_pipes++;
         }
     }
     *out = s->pipelines[idx];
