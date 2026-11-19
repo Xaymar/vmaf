@@ -129,8 +129,9 @@ int vmaf_vk_engine_get(VmafVulkanContext *ctx, enum VmafPixelFormat pix_fmt,
     e->bps = bpc > 8 ? 2 : 1;
     e->pix_fmt = pix_fmt;
     switch (pix_fmt) {
-    case VMAF_PIX_FMT_YUV420P: e->cw = (w + 1) / 2; e->ch = (h + 1) / 2; break;
-    case VMAF_PIX_FMT_YUV422P: e->cw = (w + 1) / 2; e->ch = h; break;
+    /* as VmafPicture: rounded down */
+    case VMAF_PIX_FMT_YUV420P: e->cw = w >> 1; e->ch = h >> 1; break;
+    case VMAF_PIX_FMT_YUV422P: e->cw = w >> 1; e->ch = h; break;
     case VMAF_PIX_FMT_YUV444P: e->cw = w; e->ch = h; break;
     default: e->cw = e->ch = 0; break;
     }

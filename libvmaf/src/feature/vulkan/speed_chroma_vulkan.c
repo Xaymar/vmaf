@@ -158,7 +158,6 @@ static const VmafOption options[] = {
 typedef struct SpeedPC {
     int32_t W, H, SW, SH, DW, DH, bpc, fw, scaled, out_off;
     float scaler;
-    int32_t RS;
 } SpeedPC;
 
 typedef struct SpeedStatPC {
@@ -213,14 +212,9 @@ static float mirrorf(float i, float left, float right)
 static int unit_setup(SpeedUnit *u, SpeedModule *sm, VmafVkEngine *e)
 {
     VmafVk *vk = &e->vk;
-    /* speed.c's init_chroma(): the chroma planes' size, rounded down */
-    int cw = e->w, ch = e->h;
-    switch (e->pix_fmt) {
-    case VMAF_PIX_FMT_YUV420P: cw /= 2; ch /= 2; break;
-    case VMAF_PIX_FMT_YUV422P: cw /= 2; break;
-    case VMAF_PIX_FMT_YUV444P: break;
-    default: return -EINVAL;
-    }
+    /* the chroma planes, as speed.c's init_chroma() */
+    const int cw = e->cw, ch = e->ch;
+    if (!cw || !ch) return -EINVAL;
     float scaler;
     switch (e->bpc) {
     case 8: scaler = 1.0f; break;
@@ -289,7 +283,7 @@ static int unit_setup(SpeedUnit *u, SpeedModule *sm, VmafVkEngine *e)
     u->pc = (SpeedPC) {
         .W = cw, .H = ch, .SW = SW, .SH = SH, .DW = DW, .DH = DH,
         .bpc = e->bpc, .fw = vif_get_filter_size(1, (float)u->kernelscale),
-        .scaled = scaled, .scaler = scaler, .RS = e->cw,
+        .scaled = scaled, .scaler = scaler,
     };
     SpeedStatPC *st = &u->st;
     st->DW = DW;
