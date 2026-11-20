@@ -1,47 +1,58 @@
-# VMAF - Video Multi-Method Assessment Fusion
+# VMAF with Vulkan compute
 
-[![libvmaf](https://github.com/Netflix/vmaf/actions/workflows/libvmaf.yml/badge.svg)](https://github.com/Netflix/vmaf/actions/workflows/libvmaf.yml)
-[![Windows](https://github.com/Netflix/vmaf/actions/workflows/windows.yml/badge.svg)](https://github.com/Netflix/vmaf/actions/workflows/windows.yml)
-[![ffmpeg](https://github.com/Netflix/vmaf/actions/workflows/ffmpeg.yml/badge.svg)](https://github.com/Netflix/vmaf/actions/workflows/ffmpeg.yml)
-[![Docker](https://github.com/Netflix/vmaf/actions/workflows/docker.yml/badge.svg)](https://github.com/Netflix/vmaf/actions/workflows/docker.yml)
+A fork of [Netflix/vmaf](https://github.com/Netflix/vmaf) that runs the VMAF feature extractors on a Vulkan GPU (tested on NVIDIA and AMD) and gives the same scores as the CPU code.
 
-VMAF is an [Emmy-winning](https://theemmys.tv/) perceptual video quality assessment algorithm developed by Netflix. This software package includes a stand-alone C library `libvmaf` and its wrapping Python library. The Python library also provides a set of tools that allows a user to train and test a custom VMAF model.
+`libvmaf` already offers CUDA for a few features, but only on NVIDIA. This fork adds a vendor-neutral Vulkan backend to `libvmaf` itself, so the `vmaf` command-line tool and FFmpeg's `libvmaf` filter benefit without any other changes.
 
-Read [this](https://medium.com/netflix-techblog/toward-a-practical-perceptual-video-quality-metric-653f208b9652) tech blog post for an overview, [this](https://medium.com/netflix-techblog/vmaf-the-journey-continues-44b51ee9ed12) post for the tips of best practices, and [this](https://netflixtechblog.com/toward-a-better-quality-metric-for-the-video-community-7ed94e752a30) post for our latest efforts on speed optimization, new API design and the introduction of a codec evaluation-friendly [NEG mode](resource/doc/models_v0.md#disabling-enhancement-gain-neg-mode).
+## What it adds
 
-Also included in `libvmaf` are implementations of several other metrics: PSNR, PSNR-HVS, SSIM, MS-SSIM and CIEDE2000.
+- **Vulkan feature extractors** for everything VMAF v0 and v1 models need: motion, VIF, ADM, CAMBI and SpEED (`motion_vulkan`, `vif_vulkan`, `adm_vulkan`, `cambi_vulkan`, `speed_chroma_vulkan`). Models pick the Vulkan version of a feature automatically and fall back to the CPU one for options the GPU code does not cover.
+- **Same scores as the CPU.** Every feature of every frame is compared against the CPU extractors in CI (on lavapipe) and on real GPUs, for 8 to 16 bit, 4:2:0, 4:2:2 and 4:4:4, and odd frame sizes. VMAF v0.6.1, v0.6.1neg and the v1.0.16 models are covered.
+- **Several models in one pass.** Models share one set of GPU features, so scoring four v1 models costs far less than four runs.
+- **No hard dependency.** The Vulkan loader is opened at run time; builds without `-Denable_vulkan` are unchanged, and a machine without Vulkan simply keeps using the CPU.
+- Based on current Netflix/vmaf master (v3.x, including the v1 models), so everything upstream offers still works.
 
-![vmaf logo](resource/images/vmaf_logo.jpg)
+## Benchmarks
 
-## News
+Scoring speed in frames per second, wall clock of the `vmaf` tool, start-up excluded (the Vulkan loader and driver need about 135 ms once per process). RTX 4080 SUPER, Ryzen 7 9800X3D, Windows, 1200 frames at 1080p and 600 frames at 4K. The CPU runs use this fork's CPU code with 16 threads; [libvmaf-fast](https://github.com/4KVCD/libvmaf-fast) (4KVCD's Vulkan VMAF library) is shown for comparison.
 
-- (2026-10-26) We are releasing an HDR version for VMAF-v1. Please refer to [models_v1.md](resource/doc/models_v1.md#hdr-models) for more information.
-- (2026-06) We are releasing a new set of VMAF models (**v1**). See [tech blog](https://medium.com/netflix-techblog/vmaf-v1-good-is-not-good-enough-60d7e4244ea8) for more information on v1. See [models_v1.md](resource/doc/models_v1.md) for details and model selection guidance. The previous generation of models (v0) remains documented in [models_v0.md](resource/doc/models_v0.md). We are open to user feedback on VMAF v1 and will continue to improve and update the models over time.
-- (2023-12-07) We are releasing `libvmaf v3.0.0`. It contains several optimizations and bug fixes, and a full removal of the APIs which were deprecated in `v2.0.0`.
-- (2021-12-15) We have added to CAMBI the `full_ref` input parameter to allow running CAMBI as a full-reference metric, taking into account the banding that was already present on the source. Check out the [usage](resource/doc/cambi.md) page.
-- (2021-12-1) We have added to CAMBI the `max_log_contrast` input parameter to allow to capture banding with higher contrasts than the default. We have also sped up CAMBI (e.g., around 4.5x for 4k). Check out the [usage](resource/doc/cambi.md) page.
-- (2021-10-7) We are open-sourcing CAMBI (Contrast Aware Multiscale Banding Index) - Netflix's detector for banding (aka contouring) artifacts. Check out the [tech blog](https://netflixtechblog.medium.com/cambi-a-banding-artifact-detector-96777ae12fe2) for an overview and the [technical paper](resource/doc/papers/CAMBI_PCS2021.pdf) published in PCS 2021 (note that the paper describes an initial version of CAMBI that no longer matches the code exactly, but it is still a good introduction). Also check out the [usage](resource/doc/cambi.md) page.
-- (2020-12-7) Check out our [latest tech blog](https://netflixtechblog.com/toward-a-better-quality-metric-for-the-video-community-7ed94e752a30) on speed optimization, new API design and the introduction of a codec evaluation-friendly NEG mode.
-- (2020-12-3) We are releasing `libvmaf v2.0.0`. It has a new fixed-point and x86 SIMD-optimized (AVX2, AVX-512) implementation that achieves 2x speed up compared to the previous floating-point version. It also has a [new API](libvmaf/README.md) that is more flexible and extensible.
-- (2020-7-13) We have created a [memo](https://docs.google.com/document/d/1dJczEhXO0MZjBSNyKmd3ARiCTdFVMNPBykH4_HMPoyY/edit?usp=sharing) to share our thoughts on VMAF's property in the presence of image enhancement operations, its impact on codec evaluation, and our solutions. Accordingly, we have added a new mode called [No Enhancement Gain (NEG)](resource/doc/models.md#disabling-enhancement-gain-neg-mode).
-- (2020-2-27) We have changed VMAF's license from Apache 2.0 to [BSD+Patent](https://opensource.org/licenses/BSDplusPatent), a more permissive license compared to Apache that also includes an express patent grant.
+| | 1080p | 4K |
+|---|---|---|
+| VMAF v0.6.1 + NEG: libvmaf CPU | 199 | 43 |
+| VMAF v0.6.1 + NEG: libvmaf-fast | 494 | 117 |
+| **VMAF v0.6.1 + NEG: this fork** | **937** | **281** |
+| 4 v1.0.16 models: libvmaf CPU | 169 | 31 |
+| 4 v1.0.16 models: libvmaf-fast | 283 | 74 |
+| **4 v1.0.16 models: this fork** | **802** | **253** |
 
-## Documentation
+![VMAF v0.6.1 + NEG](docs/benchmark-v0.6.1-neg.png)
 
-There is an [overview of the documentation](resource/doc/index.md) with links to specific pages, covering FAQs, available models and features, software usage guides, and a list of resources.
+![Four v1.0.16 models](docs/benchmark-v1-four-models.png)
 
-## Usage
+Notes: the 4K results with v0.6.1 + NEG are limited by the `vmaf` tool reading the input, not by the GPU. Running a single v1 model is faster on libvmaf-fast at 1080p. Its ideas (sliding CAMBI counts, fused passes) were a useful reference, thank you to its authors.
 
-The software package offers a number of ways to interact with the VMAF implementation.
+## Build and use
 
-  - The command-line tool [`vmaf`](libvmaf/tools/README.md) provides a complete algorithm implementation, such that one can easily deploy VMAF in a production environment. Additionally, the `vmaf` tool provides a number of auxillary features such as PSNR, SSIM and MS-SSIM.
-  - The [C library `libvmaf`](libvmaf/README.md) provides an interface to incorporate VMAF into your code, and tools to integrate other feature extractors into the library.
-  - The [Python library](resource/doc/python.md) offers a full array of wrapper classes and scripts for software testing, VMAF model training and validation, dataset processing, data visualization, etc.
-  - VMAF is now included as a filter in FFmpeg, and can be configured using: `./configure --enable-libvmaf`. Refer to the [Using VMAF with FFmpeg](resource/doc/ffmpeg.md) page.
-  - [VMAF Dockerfile](Dockerfile) generates a docker image from the [Python library](resource/doc/python.md). Refer to [this](resource/doc/docker.md) document for detailed usage.
-  - To build VMAF on Windows, follow [these](resource/doc/windows.md) instructions.
-  - AOM CTC: [AOM]((http://aomedia.org/)) has specified vmaf to be the standard implementation metrics tool according to the AOM common test conditions (CTC). Refer to [this page](resource/doc/aom_ctc.md) for usage compliant with AOM CTC.
+Needs the Vulkan headers and `glslc` or `glslangValidator` at build time, and a Vulkan driver at run time.
 
-## Contribution Guide
+```sh
+meson setup libvmaf libvmaf/build -Dbuildtype=release -Denable_vulkan=true
+ninja -C libvmaf/build
+```
 
-Refer to the [contribution](CONTRIBUTING.md) page. Also refer to this [slide deck](https://docs.google.com/presentation/d/1Gr4-MvOXu9HUiH4nnqLGWupJYMeh6nl2MNz6Qy9153c/edit#slide=id.gc20398b4b7_0_132) for an overview contribution guide.
+```sh
+# CPU features, Vulkan features on the first GPU found (or pick one: --vulkan=1)
+libvmaf/build/tools/vmaf -r ref.y4m -d dist.y4m --vulkan \
+    -m path=model/vmaf_v0.6.1neg.json -o score.json --json
+
+# FFmpeg's libvmaf filter, built against this libvmaf
+VMAF_VULKAN=auto ffmpeg -i dist.mp4 -i ref.mp4 -lavfi libvmaf -f null -
+```
+
+The C API is in `libvmaf/include/libvmaf/libvmaf_vulkan.h` (`vmaf_vulkan_state_init`, `vmaf_vulkan_import_state`, `vmaf_vulkan_state_free`). `VMAF_VULKAN_TIMING=1` prints a start-up and per-frame time breakdown. `libvmaf/test/vulkan/compare.sh` reproduces the CPU/GPU comparison.
+
+## Original project
+
+Everything else (models, papers, Python tools, documentation) is Netflix's work: **[github.com/Netflix/vmaf](https://github.com/Netflix/vmaf)**. Their docs in [`resource/doc`](resource/doc/index.md) still apply to this fork.
+
+VMAF is licensed under [BSD+Patent](LICENSE), Copyright (c) 2020 Netflix, Inc.; the Vulkan additions are under the same license.
