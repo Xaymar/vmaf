@@ -19,7 +19,7 @@ THEMES = {
     "light": dict(bg="#ffffff", fg="#1f2328", grid="#d8dee4", sub="#59636e"),
 }
 ENGINES = [("cpu", "libvmaf CPU", "o", "#e8833a"), ("fast", "libvmaf-fast", "D", "#2ea67a"), ("vulkan", "this fork (Vulkan)", "s", "#4a8fe7")]
-XLIM = (3, 2500)  # same fps axis in every panel
+XLIM = (1, 2500)  # same fps axis in every panel
 ROWS = [(r, n) for r in ("1080", "4k") for n in (1, 2, 4)]
 
 

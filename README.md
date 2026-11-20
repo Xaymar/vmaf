@@ -14,7 +14,7 @@ A fork of [Netflix/vmaf](https://github.com/Netflix/vmaf) that runs the VMAF fea
 
 ## Benchmarks
 
-Scoring speed in frames per second for 1, 2 and 4 VMAF v1.0.16 models scored in one pass, at 1080p and 4K, on three machines (five GPUs, one datacenter GPU). Each machine runs the CPU code of this fork, [libvmaf-fast](https://github.com/4KVCD/libvmaf-fast) (4KVCD's Vulkan VMAF library, Windows only) and this fork's Vulkan backend. Marker = mean, whisker = slowest to fastest of 7 runs; the axis is logarithmic and the same in every panel (3 to 2500 fps).
+Scoring speed in frames per second for 1, 2 and 4 VMAF v1.0.16 models scored in one pass, at 1080p and 4K, on three machines (five GPUs, one datacenter GPU). Each machine runs the CPU code of this fork, [libvmaf-fast](https://github.com/4KVCD/libvmaf-fast) (4KVCD's Vulkan VMAF library, Windows only) and this fork's Vulkan backend. Marker = mean, whisker = slowest to fastest of 7 runs; the axis is logarithmic and the same in every panel (1 to 2500 fps).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/benchmark-v1-dark.png">
