@@ -1,0 +1,13 @@
+Compiler: GCC/G++ 16.2.0 (MSYS2 ucrt64), CMake 4.5.0, NASM 3.02
+Radeon RX 6600M driver: 26.11.2 (AMD proprietary shader compiler; Vulkan 1.4.315; Windows driver 32.0.21045.29003)
+Radeon Vega iGPU driver: 26.5.2 (AMD Radeon(TM) Graphics; Vulkan 1.3.260; Windows driver 31.0.21925.1001)
+Vulkan instance/loader: 1.4.363
+libvmaf-fast: v1.3 (release libvmaf-fast-v1.3, built from 4KVCD/libvmaf-fast commit 287766520c60380899bdd021b079d49c9ef9f978); Python modules fast/python/vmaf_fast taken from that same commit
+CPU: AMD Ryzen 7 5800H with Radeon Graphics (8 cores / 16 threads)
+OS: Windows 11 10.0.26300
+Python: 3.15.2 (venv with numpy 2.5.5; libvmaf-fast runs) ; benchmark driver script run with MSYS2 Python 3.14.10
+FFmpeg (clip generation): 9.0.2 (MSYS2 ucrt64); clips verified byte-identical to docs/benchmarks/clips/SHA256SUMS.txt
+Power: laptop on AC power, Windows "Balanced" plan (unchanged), machine otherwise idle
+Vulkan devices: 0 = Radeon Vega iGPU, 1 = Radeon RX 6600M (device name verified in libvmaf output each case)
+Sanity: 1080p 1d5h_2160 mean = 78.722213 on CPU, Vega iGPU and RX 6600M
+vmaf checkout: dc5aec2e
