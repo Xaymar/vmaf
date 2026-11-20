@@ -1,0 +1,10 @@
+prefix=@VMAF_PC_PREFIX@
+libdir=@VMAF_PC_LIBDIR@
+includedir=@VMAF_PC_INCLUDEDIR@
+
+Name: libvmaf
+Description: VMAF, Video Multimethod Assessment Fusion
+Version: @PROJECT_VERSION@
+Libs: -L${libdir} -lvmaf
+Libs.private: @VMAF_PC_LIBS_PRIVATE@
+Cflags: -I${includedir} -I${includedir}/libvmaf
