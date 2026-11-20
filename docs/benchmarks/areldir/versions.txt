@@ -1,0 +1,7 @@
+Compiler: GCC/G++ 16.2.0 (MSYS2 ucrt64)
+NVIDIA driver: 621.24 (RTX 4080 SUPER, Vulkan 1.4.357)
+AMD iGPU driver: 26.11.2 (AMD Radeon(TM) Graphics, Vulkan 1.4.315)
+Vulkan SDK: 1.4.363.1
+CPU: AMD Ryzen 7 9800X3D 8-Core Processor (AMD64 Family 26 Model 68)
+OS: Windows 11 10.0.26100.9457
+Python: 3.15.2
