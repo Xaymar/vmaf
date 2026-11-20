@@ -32,7 +32,16 @@
 #pragma warning(push)
 #pragma warning(disable:4067)    /* newline for __has_include_next */
 
-#if defined(__clang__) && __has_include_next(<stdatomic.h>)
+/* The test is nested: cl does not short-circuit a preprocessor expression, and
+ * fails on __has_include_next, which it does not define, even where
+ * defined(__clang__) is false. */
+#if defined(__clang__)
+#  if __has_include_next(<stdatomic.h>)
+#    define VMAF_MSVC_CLANG_STDATOMIC 1
+#  endif
+#endif
+
+#if defined(VMAF_MSVC_CLANG_STDATOMIC)
    /* use the clang stdatomic.h with clang-cl*/
 #  include_next <stdatomic.h>
 #else /* ! stdatomic.h */
