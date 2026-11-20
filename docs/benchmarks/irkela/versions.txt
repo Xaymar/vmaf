@@ -1,0 +1,11 @@
+Compiler: clang-cl (LLVM) 23.1.4, Release /O2 /Ob2, NMake Makefiles (clang, not gcc: Areldir used GCC 16.2.0 MSYS2 ucrt64, so CPU numbers are not strictly comparable)
+Assembler: NASM 2.15.05 (AVX2 + AVX-512 asm enabled)
+NVIDIA driver: 621.01 (RTX 4070 Laptop GPU, Vulkan 1.4.357; Windows driver 32.0.16.2101)
+AMD iGPU driver: 26.11.2 (AMD Radeon 780M Graphics, RDNA 3, Vulkan 1.4.359, Windows driver 32.0.32029.2010)
+Vulkan loader: 1.4.357.0 (System32\vulkan-1.dll); headers from a Vulkan-Headers checkout, glslangValidator from MSYS2 ucrt64 (no SDK installed)
+CPU: AMD Ryzen 9 7940HS w/ Radeon 780M Graphics, 8 cores / 16 threads (default libvmaf threads)
+OS: Microsoft Windows 10 Pro 10.0.19045
+Python: 3.14.10
+Power: Balanced plan, AC power, laptop idle (250 W system cap)
+libvmaf-fast: v1.3 (commit 28776652)
+Clips: SHA-256 identical to docs/benchmarks/clips/SHA256SUMS.txt
