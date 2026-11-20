@@ -1,0 +1,7 @@
+Compiler: GCC/G++ 15.2.0 (Ubuntu 15.2.0-16ubuntu1), no include-bug workaround needed
+NVIDIA driver: 580.196.07 (Tesla P100-PCIE-16GB, Vulkan 1.4.312)
+CPU: AMD EPYC 7313P 16-Core Processor (SMT, 32 threads visible; container limited to 16 CPUs by cgroup quota, nproc 16)
+OS: Ubuntu 26.04.1 LTS, Linux 6.12.107+deb13-amd64 (container)
+Python: 3.14.4
+FFmpeg (clip generation): 8.0.1-3ubuntu2
+libvmaf-fast: not run (Windows-only, no Linux build)
