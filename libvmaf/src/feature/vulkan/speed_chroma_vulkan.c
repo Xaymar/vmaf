@@ -174,7 +174,7 @@ typedef struct SpeedUnit {
 
     SpeedPC pc;
     SpeedStatPC st;
-    VmafVkBuf tab, filt, dec, tmp, prep, filt3, covm, cen, small, blk, fin;
+    VmafVkBuf tab, filt, dec, tmp, prep, filt3, covm, cen, small_buf, blk, fin;
     VmafVkPipe p_dec[4], p_blur_v, p_blur_h, p_mean, p_center, p_cov, p_small,
                p_blocks, p_score;
     /* what comes back: the planes minus their blur (CPU tail), or the scores
@@ -314,7 +314,7 @@ static int unit_setup(SpeedUnit *u, SpeedModule *sm, VmafVkEngine *e)
             err = vmaf_vk_buffer(vk, &u->cen,
                                  (VkDeviceSize)4 * 25 * st->subw * st->subh * 8 + 16,
                                  VMAF_VK_MEM_DEVICE);
-        if (!err) err = vmaf_vk_buffer(vk, &u->small, 4 * 1280 * 4 + 16, VMAF_VK_MEM_DEVICE);
+        if (!err) err = vmaf_vk_buffer(vk, &u->small_buf, 4 * 1280 * 4 + 16, VMAF_VK_MEM_DEVICE);
         if (!err)
             err = vmaf_vk_buffer(vk, &u->blk, (VkDeviceSize)4 * 2 * st->nb * 4 + 16,
                                  VMAF_VK_MEM_DEVICE);
@@ -330,7 +330,7 @@ static int unit_setup(SpeedUnit *u, SpeedModule *sm, VmafVkEngine *e)
         err = vmaf_vk_pipeline(vk, &u->p_dec[p], "speed_dec", b, 4);
     }
     VmafVkBuf *sb[9] = { &u->dec, &u->tmp, &u->prep, &u->filt3,
-                         sm->gpu ? &u->covm : &u->dec, sm->gpu ? &u->small : &u->dec,
+                         sm->gpu ? &u->covm : &u->dec, sm->gpu ? &u->small_buf : &u->dec,
                          sm->gpu ? &u->blk : &u->dec, sm->gpu ? &u->fin : &u->dec,
                          sm->gpu ? &u->cen : &u->dec };
     if (!err) err = vmaf_vk_pipeline(vk, &u->p_blur_v, "speed_blur_v", sb, 9);
