@@ -14,22 +14,35 @@ A fork of [Netflix/vmaf](https://github.com/Netflix/vmaf) that runs the VMAF fea
 
 ## Benchmarks
 
-Scoring speed in frames per second, wall clock of the `vmaf` tool, start-up excluded (the Vulkan loader and driver need about 135 ms once per process). RTX 4080 SUPER, Ryzen 7 9800X3D, Windows, 1200 frames at 1080p and 600 frames at 4K. The CPU runs use this fork's CPU code with 16 threads; [libvmaf-fast](https://github.com/4KVCD/libvmaf-fast) (4KVCD's Vulkan VMAF library) is shown for comparison.
+Scoring speed in frames per second for 1, 2 and 4 VMAF v1.0.16 models scored in one pass, at 1080p and 4K, on three machines (five GPUs, one datacenter GPU). Each machine runs the CPU code of this fork, [libvmaf-fast](https://github.com/4KVCD/libvmaf-fast) (4KVCD's Vulkan VMAF library, Windows only) and this fork's Vulkan backend. Marker = mean, whisker = slowest to fastest of 7 runs; the axis is logarithmic.
 
-| | 1080p | 4K |
-|---|---|---|
-| VMAF v0.6.1 + NEG: libvmaf CPU | 199 | 43 |
-| VMAF v0.6.1 + NEG: libvmaf-fast | 494 | 117 |
-| **VMAF v0.6.1 + NEG: this fork** | **937** | **281** |
-| 4 v1.0.16 models: libvmaf CPU | 169 | 31 |
-| 4 v1.0.16 models: libvmaf-fast | 283 | 74 |
-| **4 v1.0.16 models: this fork** | **802** | **253** |
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/benchmark-v1-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/benchmark-v1-light.png">
+  <img alt="Scoring speed (fps) of libvmaf CPU, libvmaf-fast and this fork on each machine and GPU" src="docs/benchmark-v1-light.png">
+</picture>
 
-![VMAF v0.6.1 + NEG](docs/benchmark-v0.6.1-neg.png)
+Mean fps, 4 models: the whole table with min and max is in [`docs/benchmarks/results.md`](docs/benchmarks/results.md), the raw per-run times in [`docs/benchmarks/`](docs/benchmarks) (`results.csv` and one JSON per machine and engine).
 
-![Four v1.0.16 models](docs/benchmark-v1-four-models.png)
+| | 1080p CPU | 1080p libvmaf-fast | **1080p this fork** | 4K CPU | 4K libvmaf-fast | **4K this fork** |
+|---|--:|--:|--:|--:|--:|--:|
+| Areldir, RTX 4080 SUPER | 52 | 290 | **1016** | 12 | 83 | **302** |
+| Irkela, RTX 4070 Mobile | 22 | 151 | **444** | 5.3 | 28 | **146** |
+| Irkela, Radeon 780M (RDNA 3) | 22 | 144 | **190** | 5.3 | 31 | 27 |
+| Areldir, Radeon iGPU (RDNA 2) | 52 | 18 | **31** | 12 | 4.4 | 4.3 |
+| Merenka, Tesla P100 | 17.5 | n/a | **244** | 4.5 | n/a | **61** |
 
-Notes: the 4K results with v0.6.1 + NEG are limited by the `vmaf` tool reading the input, not by the GPU. Running a single v1 model is faster on libvmaf-fast at 1080p. Its ideas (sliding CAMBI counts, fused passes) were a useful reference, thank you to its authors.
+What the numbers say: with a discrete GPU this fork is 2 to 4 times faster than libvmaf-fast and 20 to 25 times faster than the CPU, and it hardly slows down when more models are scored, because the models share one set of features. On integrated GPUs it is not always ahead: the 780M is level with libvmaf-fast at 1080p, and at 4K libvmaf-fast is faster on both integrated GPUs (4K on an RDNA 2 iGPU is even slower than the CPU). libvmaf-fast scores each model separately, so its speed drops with every model added. The P100 machine (Merenka-GPU1 is identical) has no libvmaf-fast result: its release is Windows only.
+
+How it was measured, so you can repeat it:
+
+- **Clips.** 120 frames of one 4K 60 fps source (`cabin-in-the-woods`, from 20 s), 8-bit 4:2:0, as raw `.yuv`; the 1080p clip is the same frames scaled with Lanczos. The distorted copy is x264 `-preset medium -crf 30`. Commands and SHA-256 of the raw files are in [`docs/benchmarks/clips/`](docs/benchmarks/clips); every machine verified the same hashes.
+- **Models.** `vmaf_v1.0.16` `1d5h_2160`, then `+3d0h`, `+3d0h_2160`, `+5d0h` for 2 and 4 models. Scores are identical on CPU and on every GPU (mean 78.722213 for 1080p, 1d5h_2160).
+- **Timing.** Every case runs twice, over 120 and over 24 frames, and the speed is 96 frames divided by the time difference, which removes process, loader and driver start-up (about 0.15 s with Vulkan). Seven repeats after a warm-up give min, mean and max. The CPU runs use the default thread count (the Merenka container has a 16-CPU quota). libvmaf-fast is driven from its Python API, one scorer per model, with its device forced to the GPU in question (`fast_dev.py` in each machine's folder).
+- **Builds.** Release, static, `-DVMAF_ENABLE_VULKAN=ON`, with GCC 16.2 (Areldir), GCC 15.2 (Merenka) and clang-cl 23 (Irkela; the CPU numbers of the laptop are therefore not strictly comparable). Drivers, CPUs and OS versions are in `versions.txt` beside each machine's results.
+- **Caveats.** Laptops are power-limited and the 4070 Mobile runs spread by up to 25 %; Areldir's NVIDIA GPU carried about 15 % desktop load. One run per machine and no thermal control: treat differences below 10 % as noise.
+
+Reproduce: `python tools/bench/vmaf_bench.py --engine vulkan --vmaf build/tools/vmaf --models model --clips <clip dir> --device 0 --label "Machine · GPU" --out gpu.json`, then `python tools/bench/plot_bench.py docs/benchmarks docs/benchmark-v1` for the graphs and tables.
 
 ## Build and use
 

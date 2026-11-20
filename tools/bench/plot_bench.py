@@ -92,10 +92,30 @@ def write_csv(runs, path):
                 w.writerow([r["meta"]["label"], r["meta"]["engine"], x["res"], x["models"], f"{x['min']:.2f}", f"{x['avg']:.2f}", f"{x['max']:.2f}", len(x["runs"])])
 
 
+def write_md(panels, path):
+    """Markdown tables: mean fps (min-max) per machine/device and engine."""
+    cols = [(r, n) for r in ("1080", "4k") for n in (1, 2, 4)]
+    out = ["# Results (fps, mean over runs, slowest to fastest in brackets)\n"]
+    for (machine, dev), eng in panels.items():
+        out.append(f"\n## {machine} · {dev}\n")
+        out.append("| engine | " + " | ".join(f"{'4K' if r == '4k' else '1080p'} · {n}" for r, n in cols) + " |")
+        out.append("|---|" + "--:|" * len(cols))
+        for key, lab, _, _ in ENGINES:
+            if key not in eng:
+                continue
+            cells = []
+            for r, n in cols:
+                x = next(x for x in eng[key][0]["results"] if x["res"] == r and x["models"] == n)
+                cells.append(f"{x['avg']:.1f} ({x['min']:.0f}-{x['max']:.0f})")
+            out.append(f"| {lab} | " + " | ".join(cells) + " |")
+    Path(path).write_text("\n".join(out) + "\n")
+
+
 def main():
     d, prefix = sys.argv[1], sys.argv[2]
     runs, panels = load(d)
     write_csv(runs, Path(d) / "results.csv")
+    write_md(panels, Path(d) / "results.md")
     m = runs[0]["meta"]
     foot = (f"Marker = mean, whisker = slowest to fastest of {m['runs']} runs. {m['frames']}-frame 8-bit 4:2:0 clips, v1.0.16 models "
             f"(1d5h_2160, +3d0h, +3d0h_2160, +5d0h), start-up excluded. Method and versions in README.")
