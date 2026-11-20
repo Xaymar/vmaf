@@ -19,6 +19,7 @@ THEMES = {
     "light": dict(bg="#ffffff", fg="#1f2328", grid="#d8dee4", sub="#59636e"),
 }
 ENGINES = [("cpu", "libvmaf CPU", "o", "#e8833a"), ("fast", "libvmaf-fast", "D", "#2ea67a"), ("vulkan", "this fork (Vulkan)", "s", "#4a8fe7")]
+XLIM = (3, 2500)  # same fps axis in every panel
 ROWS = [(r, n) for r in ("1080", "4k") for n in (1, 2, 4)]
 
 
@@ -62,6 +63,7 @@ def draw(panels, theme, out, foot):
                 ax.plot([row["min"], row["max"]], [yy, yy], "|", color=col, ms=6)
                 ax.plot(row["avg"], yy, mk, color=col, ms=6.5, mec=t["bg"], mew=0.8)
         ax.set_xscale("log")
+        ax.set_xlim(*XLIM)
         ax.set_yticks(range(len(ROWS)))
         ax.set_yticklabels([f"{'4K' if r == '4k' else '1080p'} · {m} model{'s' if m > 1 else ''}" for r, m in reversed(ROWS)], color=t["fg"], fontsize=8.5)
         ax.set_ylim(-0.6, len(ROWS) - 0.4)
