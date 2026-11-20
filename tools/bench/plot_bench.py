@@ -5,7 +5,7 @@ Labels are "<machine> · <device>". CPU runs ("<machine> · CPU") are drawn in e
 One panel per machine and GPU, one row per resolution and model count, log fps axis, a marker per engine at the
 mean with a whisker from the slowest to the fastest run.
 
-  python plot_bench.py docs/benchmarks docs/benchmark-v1
+  python plot_bench.py docs/benchmarks docs/benchmark-v1   (reads docs/benchmarks/<machine>/*.json)
 """
 import json, sys
 from pathlib import Path
@@ -23,7 +23,7 @@ ROWS = [(r, n) for r in ("1080", "4k") for n in (1, 2, 4)]
 
 
 def load(d):
-    runs = [json.loads(p.read_text()) for p in sorted(Path(d).glob("*.json"))]
+    runs = [json.loads(p.read_text()) for p in sorted(Path(d).glob("*/*.json"))]
     panels = {}
     for r in runs:
         m = r["meta"]
@@ -37,7 +37,8 @@ def load(d):
             for (mc, _), e in panels.items():
                 if mc == machine:
                     e["cpu"] = (r, m)
-    return runs, panels
+    order = sorted(panels, key=lambda k: (k[0], any(x in k[1] for x in ("iGPU", "Vega", "780M")), k[1]))
+    return runs, {k: panels[k] for k in order}
 
 
 def draw(panels, theme, out, foot):
@@ -81,9 +82,20 @@ def draw(panels, theme, out, foot):
     plt.close(fig)
 
 
+def write_csv(runs, path):
+    import csv
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["label", "engine", "resolution", "models", "fps_min", "fps_avg", "fps_max", "runs"])
+        for r in runs:
+            for x in r["results"]:
+                w.writerow([r["meta"]["label"], r["meta"]["engine"], x["res"], x["models"], f"{x['min']:.2f}", f"{x['avg']:.2f}", f"{x['max']:.2f}", len(x["runs"])])
+
+
 def main():
     d, prefix = sys.argv[1], sys.argv[2]
     runs, panels = load(d)
+    write_csv(runs, Path(d) / "results.csv")
     m = runs[0]["meta"]
     foot = (f"Marker = mean, whisker = slowest to fastest of {m['runs']} runs. {m['frames']}-frame 8-bit 4:2:0 clips, v1.0.16 models "
             f"(1d5h_2160, +3d0h, +3d0h_2160, +5d0h), start-up excluded. Method and versions in README.")

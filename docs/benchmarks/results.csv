@@ -1,0 +1,61 @@
+label,engine,resolution,models,fps_min,fps_avg,fps_max,runs
+Areldir · CPU,cpu,1080,1,97.14,97.41,97.72,7
+Areldir · CPU,cpu,1080,2,70.76,71.34,71.64,7
+Areldir · CPU,cpu,1080,4,51.42,51.79,52.15,7
+Areldir · CPU,cpu,4k,1,20.85,20.94,20.98,7
+Areldir · CPU,cpu,4k,2,15.48,15.78,16.01,7
+Areldir · CPU,cpu,4k,4,12.28,12.40,12.50,7
+Areldir · Radeon iGPU (RDNA 2),fast,1080,1,73.63,73.88,74.14,7
+Areldir · Radeon iGPU (RDNA 2),fast,1080,2,36.73,36.78,36.87,7
+Areldir · Radeon iGPU (RDNA 2),fast,1080,4,18.43,18.44,18.46,7
+Areldir · Radeon iGPU (RDNA 2),fast,4k,1,17.66,17.68,17.69,7
+Areldir · Radeon iGPU (RDNA 2),fast,4k,2,8.77,8.78,8.80,7
+Areldir · Radeon iGPU (RDNA 2),fast,4k,4,4.38,4.38,4.39,7
+Areldir · RTX 4080 SUPER,fast,1080,1,443.85,468.03,485.21,7
+Areldir · RTX 4080 SUPER,fast,1080,2,363.66,379.63,402.05,7
+Areldir · RTX 4080 SUPER,fast,1080,4,285.74,289.96,296.63,7
+Areldir · RTX 4080 SUPER,fast,4k,1,121.50,123.06,124.14,7
+Areldir · RTX 4080 SUPER,fast,4k,2,102.50,104.81,106.30,7
+Areldir · RTX 4080 SUPER,fast,4k,4,80.47,82.77,86.48,7
+Areldir · Radeon iGPU (RDNA 2),vulkan,1080,1,47.44,47.63,47.87,7
+Areldir · Radeon iGPU (RDNA 2),vulkan,1080,2,40.43,40.59,40.75,7
+Areldir · Radeon iGPU (RDNA 2),vulkan,1080,4,30.97,31.00,31.03,7
+Areldir · Radeon iGPU (RDNA 2),vulkan,4k,1,5.28,5.28,5.29,7
+Areldir · Radeon iGPU (RDNA 2),vulkan,4k,2,4.90,4.91,4.92,7
+Areldir · Radeon iGPU (RDNA 2),vulkan,4k,4,4.27,4.28,4.28,7
+Areldir · RTX 4080 SUPER,vulkan,1080,1,1092.92,1124.57,1180.44,7
+Areldir · RTX 4080 SUPER,vulkan,1080,2,1045.23,1087.45,1145.20,7
+Areldir · RTX 4080 SUPER,vulkan,1080,4,979.93,1015.54,1030.24,7
+Areldir · RTX 4080 SUPER,vulkan,4k,1,298.96,302.44,308.29,7
+Areldir · RTX 4080 SUPER,vulkan,4k,2,295.71,309.49,333.19,7
+Areldir · RTX 4080 SUPER,vulkan,4k,4,291.97,301.80,340.52,7
+Irkela · CPU,cpu,1080,1,40.61,40.88,41.06,7
+Irkela · CPU,cpu,1080,2,30.02,30.62,30.84,7
+Irkela · CPU,cpu,1080,4,21.86,21.95,22.06,7
+Irkela · CPU,cpu,4k,1,9.55,9.58,9.60,7
+Irkela · CPU,cpu,4k,2,7.25,7.27,7.29,7
+Irkela · CPU,cpu,4k,4,5.32,5.34,5.37,7
+Irkela · Radeon 780M (RDNA 3),fast,1080,1,243.34,249.94,258.49,7
+Irkela · Radeon 780M (RDNA 3),fast,1080,2,185.12,191.80,197.31,7
+Irkela · Radeon 780M (RDNA 3),fast,1080,4,142.74,144.11,146.38,7
+Irkela · Radeon 780M (RDNA 3),fast,4k,1,53.51,56.65,57.88,7
+Irkela · Radeon 780M (RDNA 3),fast,4k,2,43.12,44.81,46.29,7
+Irkela · Radeon 780M (RDNA 3),fast,4k,4,30.05,30.82,31.42,7
+Irkela · RTX 4070 Mobile,fast,1080,1,223.21,244.36,290.76,7
+Irkela · RTX 4070 Mobile,fast,1080,2,160.31,192.19,206.38,7
+Irkela · RTX 4070 Mobile,fast,1080,4,141.37,150.51,160.42,7
+Irkela · RTX 4070 Mobile,fast,4k,1,53.53,55.34,57.49,7
+Irkela · RTX 4070 Mobile,fast,4k,2,44.22,46.70,50.34,7
+Irkela · RTX 4070 Mobile,fast,4k,4,23.23,28.05,31.95,7
+Irkela · Radeon 780M (RDNA 3),vulkan,1080,1,244.65,246.42,250.20,7
+Irkela · Radeon 780M (RDNA 3),vulkan,1080,2,218.11,224.82,239.25,7
+Irkela · Radeon 780M (RDNA 3),vulkan,1080,4,188.26,190.17,192.01,7
+Irkela · Radeon 780M (RDNA 3),vulkan,4k,1,35.15,35.63,36.35,7
+Irkela · Radeon 780M (RDNA 3),vulkan,4k,2,32.79,33.44,33.73,7
+Irkela · Radeon 780M (RDNA 3),vulkan,4k,4,26.25,27.22,28.01,7
+Irkela · RTX 4070 Mobile,vulkan,1080,1,621.82,698.51,766.30,7
+Irkela · RTX 4070 Mobile,vulkan,1080,2,592.97,678.71,778.15,7
+Irkela · RTX 4070 Mobile,vulkan,1080,4,425.08,444.23,467.98,7
+Irkela · RTX 4070 Mobile,vulkan,4k,1,155.15,161.12,167.02,7
+Irkela · RTX 4070 Mobile,vulkan,4k,2,154.23,159.59,168.84,7
+Irkela · RTX 4070 Mobile,vulkan,4k,4,134.28,145.91,160.18,7
